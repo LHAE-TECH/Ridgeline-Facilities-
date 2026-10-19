@@ -1,0 +1,8 @@
+<%- include('../partials/head', { title: 'Customers' }) %>
+<div class="page-head"><h1>Customers</h1><form class="inline-form" method="get"><input name="q" value="<%= q %>" placeholder="Search name or account"><button class="secondary" type="submit">Search</button></form></div>
+<div class="card"><div class="table-wrap"><table><tr><th>Account</th><th>Status</th><th class="num">Units</th><th class="num">Minimum</th><th class="num">Balance</th><th class="num">Available</th></tr>
+<% customers.forEach(function (c) { const low = c.agreed_minimum_balance_cents !== null && c.prepaid_balance_cents < c.agreed_minimum_balance_cents; %>
+<tr><td><a href="/admin/customers/<%= c.id %>"><%= c.name %></a><br><small><%= c.account_ref %> · <%= humanize(c.customer_category) %></small></td><td><%- include('../partials/status', { s: c.status }) %><% if (c.custom_arrangement) { %> <span class="badge">Custom</span><% } %></td>
+<td class="num"><%= c.units %></td><td class="num"><%= money(c.agreed_minimum_balance_cents) %></td><td class="num"><%= money(c.prepaid_balance_cents) %><% if (low) { %> <span class="badge err">Low</span><% } %></td><td class="num"><%= money(c.prepaid_balance_cents - c.committed) %></td></tr><% }) %>
+</table></div></div>
+<%- include('../partials/foot') %>

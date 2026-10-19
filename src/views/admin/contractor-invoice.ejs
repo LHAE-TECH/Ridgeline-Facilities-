@@ -1,0 +1,29 @@
+<%- include('../partials/head', { title: invoice.invoice_number }) %>
+<div class="page-head"><div><h1>Contractor invoice <%= invoice.invoice_number %></h1><small><%= invoice.contractor_legal_name %> → Ridgeline Facilities · job <a href="/admin/jobs/<%= invoice.job_id %>"><%= invoice.job_ref %></a> (<%= invoice.customer_name %>)</small></div><%- include('../partials/status', { s: invoice.status }) %></div>
+<div class="grid-2">
+  <div class="card"><h2>Supplier</h2><dl class="kv"><dt>Legal name</dt><dd><%= invoice.contractor_legal_name %></dd><dt>NZBN</dt><dd><%= invoice.contractor_nzbn || '—' %></dd>
+    <dt>GST</dt><dd><%= invoice.gst_registered ? 'Registered ' + (invoice.contractor_gst_number || '(number missing)') : 'Not registered' %></dd><dt>Tax invoice</dt><dd><%= invoice.is_tax_invoice ? 'Yes' : 'No' %></dd>
+    <dt>Invoice date</dt><dd><%= date(invoice.invoice_date) %></dd><dt>Terms</dt><dd><%= invoice.payment_terms_days %> days</dd>
+    <dt>Document</dt><dd><% if (invoice.file_id) { %><a href="/files/<%= invoice.file_id %>" target="_blank">View uploaded invoice</a><% } else { %>Not uploaded<% } %></dd><% if (invoice.notes) { %><dt>Notes</dt><dd><%= invoice.notes %></dd><% } %></dl></div>
+  <div class="card"><h2>Checks against job</h2><dl class="kv"><dt>Authorised cost</dt><dd><%= money(job.authorised_contractor_cost_cents) %> ex GST</dd>
+    <dt>Evidence</dt><dd><%= report ? 'v' + report.version + ' ' + report.review_status : 'None' %></dd>
+    <% if (report) { %><dt>Reported labour</dt><dd><%= (report.labour_minutes / 60).toFixed(2) %> h × <%= report.workers %></dd><% } %>
+    <% if (rateCard) { %><dt>Rate card</dt><dd>Labour <%= money(rateCard.labour_rate_cents) %>/h · callout <%= money(rateCard.callout_cents) %> · emergency <%= money(rateCard.emergency_callout_cents) %> · after-hours <%= mult(rateCard.after_hours_multiplier_bps) %></dd><% } %></dl></div>
+</div>
+<div class="card"><h2>Lines</h2><div class="table-wrap"><table><tr><th>#</th><th>Category</th><th>Description</th><th>Window</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr>
+<% lines.forEach(function (l) { %><tr><td><%= l.line_no %></td><td><%= humanize(l.category) %></td><td><%= l.description %></td><td><%= windowLabel(l.time_window) %></td><td class="num"><%= qtyFmt(l.quantity_milli) %></td><td class="num"><%= money(l.unit_rate_cents) %></td><td class="num"><%= money(l.amount_cents) %></td></tr><% }) %>
+<tr><td colspan="6">Subtotal ex GST</td><td class="num"><%= money(invoice.subtotal_ex_gst_cents) %></td></tr><tr><td colspan="6">GST</td><td class="num"><%= money(invoice.gst_cents) %></td></tr><tr class="total"><td colspan="6">Total</td><td class="num"><%= money(invoice.total_cents) %></td></tr></table></div></div>
+<div class="card"><h2>Validation (<%= flags.length %> flag<%= flags.length === 1 ? '' : 's' %>)</h2>
+<% if (!flags.length) { %><p class="notice ok">Matches the job, rate card, authorised scope and evidence.</p><% } %>
+<% flags.forEach(function (f) { %><p class="notice <%= f.severity === 'blocking' ? 'err' : '' %>"><strong><%= f.severity === 'blocking' ? 'Blocking' : 'Check' %>:</strong> <%= f.message %></p><% }) %>
+<% if (invoice.override_reason) { %><p><strong>Approved with override:</strong> <%= invoice.override_reason %></p><% } %>
+<% if (invoice.rejection_reason) { %><p><strong>Rejected:</strong> <%= invoice.rejection_reason %></p><% } %>
+<% if (['submitted','flagged'].includes(invoice.status) && ['admin','finance'].includes(actor.role)) { %>
+<div class="grid-2">
+  <form method="post" action="/admin/contractor-invoices/<%= invoice.id %>/approve" class="stack"><%- include('../partials/csrf') %>
+    <% if (flags.length) { %><textarea name="override_reason" rows="2" placeholder="Reason for approving despite the flags (required)"></textarea><% } %>
+    <button type="submit">Approve invoice &amp; create customer invoice draft</button></form>
+  <form method="post" action="/admin/contractor-invoices/<%= invoice.id %>/reject" class="stack"><%- include('../partials/csrf') %><textarea name="reason" rows="2" required placeholder="Reason for rejection (sent to contractor)"></textarea><button type="submit" class="danger">Reject</button></form>
+</div><% } %>
+<% if (customerInvoice) { %><p>Customer invoice: <a href="/admin/customer-invoices/<%= customerInvoice.id %>"><%= customerInvoice.invoice_number || 'Draft' %></a></p><% } %></div>
+<%- include('../partials/foot') %>

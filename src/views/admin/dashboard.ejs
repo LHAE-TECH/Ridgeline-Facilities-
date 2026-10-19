@@ -1,0 +1,68 @@
+<%- include('../partials/head', { title: 'Operations dashboard' }) %>
+<div class="page-head"><div><h1>Operations dashboard</h1><small>Period <%= date(d.period.from) %> – <%= date(d.period.to) %></small></div>
+<form class="inline-form" method="get"><input type="date" name="from" value="<%= d.period.from %>"><input type="date" name="to" value="<%= d.period.to %>"><button class="secondary" type="submit">Apply</button></form></div>
+<% const unconfigured = Object.entries(integrations).filter(function (e) { return e[1].mode === 'unconfigured'; }); if (unconfigured.length) { %>
+<div class="notice">Unconfigured integrations: <%= unconfigured.map(function (e) { return e[0]; }).join(', ') %>. <a href="/admin/integrations">Details</a></div><% } %>
+
+<h2>Customer accounts</h2>
+<div class="stats">
+  <div class="stat"><div class="label">Active accounts</div><div class="value"><%= d.accounts.active %></div><div class="sub"><%= d.accounts.onboarding %> onboarding · <%= d.accounts.suspended %> suspended</div></div>
+  <div class="stat"><div class="label">Facilities &amp; units</div><div class="value"><%= d.facilities.units %> units</div><div class="sub"><%= d.facilities.facilities %> facilities · <%= d.facilities.sites %> sites</div></div>
+  <div class="stat"><div class="label">Required minimum balances</div><div class="value"><%= money(d.accounts.required_minimum) %></div><div class="sub"><%= d.accounts.custom_arrangements %> custom arrangement(s)</div></div>
+  <div class="stat"><div class="label">Customer prepaid balances</div><div class="value"><%= money(d.balanceSheet.customerPrepaidLiability) %></div><div class="sub">Liability, not revenue</div></div>
+  <div class="stat"><div class="label">Committed / available</div><div class="value"><%= money(d.accounts.available) %></div><div class="sub"><%= money(d.accounts.committed) %> committed</div></div>
+  <div class="stat <%= d.accounts.low_balance ? 'alert' : '' %>"><div class="label">Low-balance accounts</div><div class="value"><%= d.accounts.low_balance %></div></div>
+</div>
+
+<h2>Jobs</h2>
+<div class="stats">
+  <div class="stat"><div class="label">Awaiting funds / approval</div><div class="value"><%= d.jobs.awaitingFunds %></div></div>
+  <div class="stat"><div class="label">Awaiting dispatch</div><div class="value"><a href="/admin/dispatch"><%= d.jobs.awaitingDispatch %></a></div></div>
+  <div class="stat"><div class="label">In progress</div><div class="value"><%= d.jobs.inProgress %></div></div>
+  <div class="stat"><div class="label">Awaiting evidence review</div><div class="value"><a href="/admin/jobs?status=evidence_submitted"><%= d.jobs.awaitingEvidence %></a></div></div>
+  <div class="stat <%= d.overdue.length ? 'alert' : '' %>"><div class="label">Overdue jobs</div><div class="value"><%= d.overdue.length %></div></div>
+  <div class="stat <%= d.disputes ? 'alert' : '' %>"><div class="label">Open disputes</div><div class="value"><a href="/admin/disputes"><%= d.disputes %></a></div></div>
+</div>
+
+<h2>Invoicing &amp; payments</h2>
+<div class="stats">
+  <div class="stat"><div class="label">Contractor invoices to approve</div><div class="value"><a href="/admin/contractor-invoices"><%= d.contractorInvoices.awaiting %></a></div><div class="sub"><%= d.contractorInvoices.flagged %> flagged</div></div>
+  <div class="stat"><div class="label">Customer invoices issued</div><div class="value"><%= d.customerInvoices.issued_in_period %></div><div class="sub"><%= d.customerInvoices.drafts %> draft(s) to issue</div></div>
+  <div class="stat"><div class="label">Outstanding receivables</div><div class="value"><%= money(d.balanceSheet.receivables) %></div><div class="sub"><%= d.customerInvoices.overdue %> overdue invoice(s)</div></div>
+  <div class="stat"><div class="label">Approved contractor payables</div><div class="value"><%= money(d.payables.approved_unpaid) %></div><div class="sub"><%= d.payables.on_hold %> on hold</div></div>
+  <div class="stat"><div class="label">Contractor payments due (7 days)</div><div class="value"><%= money(d.payables.due_7_days) %></div><div class="sub"><%= d.payables.overdue %> overdue</div></div>
+  <div class="stat"><div class="label">Contractor payments completed</div><div class="value"><%= money(d.payables.paidInPeriod) %></div><div class="sub"><%= d.payables.paidCountInPeriod %> confirmed in period</div></div>
+</div>
+
+<h2>Margin (invoiced in period, excl GST)</h2>
+<div class="stats">
+  <div class="stat"><div class="label">Customer selling price</div><div class="value"><%= money(d.margin.sellingPriceExGst) %></div><div class="sub"><%= d.margin.invoices %> invoices<% if (d.margin.creditNotes) { %>, net of <%= money(d.margin.creditNotes) %> credits<% } %></div></div>
+  <div class="stat"><div class="label">Contractor cost</div><div class="value"><%= money(d.margin.contractorCostExGst) %></div></div>
+  <div class="stat"><div class="label">Markup / gross profit</div><div class="value"><%= money(d.margin.grossProfit) %></div><div class="sub">Before overheads</div></div>
+  <div class="stat"><div class="label">Gross margin</div><div class="value"><%= bps(d.margin.grossMarginBps) %></div><div class="sub">Of selling price (35% markup ≈ 25.93%)</div></div>
+</div>
+<div class="grid-2">
+  <div class="card"><h2>Standard vs premium-time costs</h2><div class="table-wrap"><table><tr><th>Time window</th><th class="num">Contractor cost</th><th class="num">Customer price</th></tr>
+  <% d.byWindow.forEach(function (w) { %><tr><td><%= windowLabel(w.time_window) %></td><td class="num"><%= money(w.contractor_cost) %></td><td class="num"><%= money(w.customer_price) %></td></tr><% }) %>
+  <% if (!d.byWindow.length) { %><tr><td colspan="3" class="muted">No approved contractor invoices in period.</td></tr><% } %></table></div></div>
+  <div class="card"><h2>Financial position (all time)</h2><dl class="kv">
+    <dt>Cash (bank + card clearing)</dt><dd><%= money(d.balanceSheet.cash) %></dd>
+    <dt>Customer prepaid liability</dt><dd><%= money(d.balanceSheet.customerPrepaidLiability) %></dd>
+    <dt>Customer receivables</dt><dd><%= money(d.balanceSheet.receivables) %></dd>
+    <dt>Contractor payables</dt><dd><%= money(d.balanceSheet.contractorPayables) %></dd>
+    <dt>Net GST payable</dt><dd><%= money(d.balanceSheet.gstPayableNet) %></dd>
+    <dt>Revenue</dt><dd><%= money(d.profitAllTime.revenue) %></dd>
+    <dt>Contractor costs</dt><dd><%= money(d.profitAllTime.contractorCosts) %></dd>
+    <dt>Gross profit</dt><dd><strong><%= money(d.profitAllTime.grossProfit) %></strong></dd></dl>
+    <p class="field-hint">Customer deposits and top-ups are held as a liability and are never counted as revenue or profit.</p></div>
+</div>
+<div class="grid-2">
+  <div class="card"><h2>Low-balance accounts</h2><% d.lowBalance.forEach(function (c) { %><p><a href="/admin/customers/<%= c.id %>"><%= c.name %></a> · <%= money(c.prepaid_balance_cents) %> of <%= money(c.agreed_minimum_balance_cents) %></p><% }) %><% if (!d.lowBalance.length) { %><p class="muted">None</p><% } %></div>
+  <div class="card"><h2>Overdue jobs</h2><% d.overdue.forEach(function (j) { %><p><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> · <%= humanize(j.priority) %> · <%= statusLabel(j.status) %></p><% }) %><% if (!d.overdue.length) { %><p class="muted">None</p><% } %></div>
+  <div class="card"><h2>Compliance expiring (30 days)</h2><% d.compliance.forEach(function (c) { %><p><a href="/admin/contractors/<%= c.contractor_id %>"><%= c.legal_name %></a> · <%= humanize(c.doc_type) %> · <%= date(c.expires_at) %></p><% }) %><% if (!d.compliance.length) { %><p class="muted">None</p><% } %></div>
+  <div class="card"><h2>Failures needing attention</h2><dl class="kv">
+    <dt>Failed / reversed customer payments (30 d)</dt><dd><%= d.failures.failed_payments %></dd><dt>Pending customer payments</dt><dd><a href="/admin/payments"><%= d.failures.pending_payments %></a></dd>
+    <dt>Failed accounting syncs</dt><dd><a href="/admin/integrations"><%= d.failures.failed_sync %></a></dd><dt>Syncs skipped (unconfigured)</dt><dd><%= d.failures.skipped_sync %></dd>
+    <dt>Failed emails</dt><dd><a href="/admin/notifications"><%= d.failures.failed_notifications %></a></dd><dt>Emails not sent (no SMTP)</dt><dd><%= d.failures.unsent_notifications %></dd></dl></div>
+</div>
+<%- include('../partials/foot') %>

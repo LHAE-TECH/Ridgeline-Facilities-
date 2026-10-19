@@ -1,0 +1,31 @@
+<%- include('../partials/head', { title: 'Dashboard' }) %>
+<div class="page-head">
+  <div><h1><%= customer.name %></h1><small>Account <%= customer.account_ref %> · <%- include('../partials/status', { s: customer.status }) %></small></div>
+  <% if (actor.customerRole !== 'viewer' && customer.status === 'active') { %><a class="btn" href="/app/jobs/new">Book a job</a><% } %>
+</div>
+<% if (customer.status === 'pending_assessment') { %>
+  <div class="notice"><strong>Next step:</strong> add your sites and facilities, then <a href="/app/assessment">calculate your recommended minimum balance</a>. Ridgeline will confirm the agreed amount.</div>
+<% } else if (customer.status === 'pending_deposit') { %>
+  <div class="notice"><strong>Almost ready:</strong> your agreed minimum balance is <%= money(customer.agreed_minimum_balance_cents) %>. <a href="/app/account">Pay your initial deposit</a> to activate bookings.</div>
+<% } %>
+<% if (position.belowMinimum && customer.status === 'active') { %>
+  <div class="notice err">Your prepaid balance is below the agreed minimum. Routine and urgent jobs are held until you <a href="/app/account">top up <%= money(position.shortfallToMinimumCents) %></a>.</div>
+<% } %>
+<% if (quotes.length) { %><div class="notice"><strong><%= quotes.length %> quote/variation(s) awaiting your approval:</strong> <% quotes.forEach(function (q) { %><a href="/app/jobs/<%= q.job_id %>"><%= q.ref %></a> <% }) %></div><% } %>
+<div class="stats">
+  <div class="stat"><div class="label">Prepaid balance</div><div class="value"><%= money(position.balanceCents) %></div><div class="sub">Agreed minimum <%= money(position.minimumCents) %></div></div>
+  <div class="stat"><div class="label">Available</div><div class="value"><%= money(position.availableCents) %></div><div class="sub"><%= money(position.committedCents) %> committed to booked jobs</div></div>
+  <div class="stat"><div class="label">Open jobs</div><div class="value"><%= counts.open %></div><div class="sub"><%= counts.held %> on hold</div></div>
+  <div class="stat"><div class="label">Portfolio</div><div class="value"><%= facilities.units %> units</div><div class="sub"><%= facilities.n %> facility group(s)</div></div>
+</div>
+<% if (outstanding.length) { %>
+<div class="card"><h2>Invoices with an amount payable</h2><div class="table-wrap"><table><tr><th>Invoice</th><th>Due</th><th class="num">Payable</th></tr>
+<% outstanding.forEach(function (i) { %><tr><td><a href="/app/invoices/<%= i.id %>"><%= i.invoice_number %></a></td><td><%= date(i.due_date) %></td><td class="num"><%= money(i.total_cents - i.credited_cents - i.prepaid_applied_cents - i.amount_paid_cents + i.credit_to_prepaid_cents) %></td></tr><% }) %>
+</table></div></div>
+<% } %>
+<div class="card"><div class="page-head"><h2>Recent jobs</h2><a href="/app/jobs">All jobs</a></div>
+<% if (!jobs.length) { %><p class="muted">No jobs yet.</p><% } else { %>
+<div class="table-wrap"><table><tr><th>Job</th><th>Site</th><th>Priority</th><th>Status</th><th>Booked</th></tr>
+<% jobs.forEach(function (j) { %><tr><td><a href="/app/jobs/<%= j.id %>"><%= j.ref %></a><br><small><%= j.title %></small></td><td><%= j.site_name %></td><td><%= humanize(j.priority) %></td><td><%- include('../partials/status', { s: j.status }) %></td><td><%= date(j.created_at) %></td></tr><% }) %>
+</table></div><% } %></div>
+<%- include('../partials/foot') %>

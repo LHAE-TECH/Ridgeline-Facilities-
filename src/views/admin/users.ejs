@@ -1,0 +1,7 @@
+<%- include('../partials/head', { title: 'Staff users' }) %>
+<h1>Staff users</h1>
+<div class="card"><div class="table-wrap"><table><tr><th>Name</th><th>Email</th><th>Role</th><th>Last sign-in</th><th></th></tr>
+<% users.forEach(function (u) { %><tr><td><%= u.name %></td><td><%= u.email %></td><td><%= u.role %></td><td><%= dt(u.last_login_at) %></td><td><form method="post" action="/admin/users/<%= u.id %>/active" class="inline-form"><%- include('../partials/csrf') %><input type="hidden" name="active" value="<%= u.is_active ? 'false' : 'true' %>"><button class="small secondary" type="submit"><%= u.is_active ? 'Deactivate' : 'Reactivate' %></button></form></td></tr><% }) %></table></div></div>
+<div class="card"><h2>Add staff user</h2><form method="post" action="/admin/users" class="stack"><%- include('../partials/csrf') %><div class="grid-2"><input name="name" placeholder="Name" required><input name="email" type="email" placeholder="Email" required>
+<select name="role"><option value="ops">Operations – dispatch, evidence review, contractor compliance</option><option value="finance">Finance – invoices, payments, refunds</option><option value="admin">Administrator – everything incl. pricing &amp; settings</option></select><input name="password" type="password" minlength="10" placeholder="Temporary password" required></div><button type="submit">Create user</button></form></div>
+<%- include('../partials/foot') %>

@@ -1,0 +1,13 @@
+<%- include('partials/head', { title: 'Sign in' }) %>
+<div class="card auth-box">
+  <h1>Sign in</h1>
+  <form method="post" action="/login" class="stack">
+    <%- include('partials/csrf') %>
+    <input type="hidden" name="next" value="<%= next %>">
+    <div><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required></div>
+    <div><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>
+    <button type="submit">Sign in</button>
+  </form>
+  <p class="muted">New customer? <a href="/register">Open a prepaid account</a>. Contractor? <a href="/contractors/apply">Apply here</a>.</p>
+</div>
+<%- include('partials/foot') %>

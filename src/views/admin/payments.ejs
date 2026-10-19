@@ -1,0 +1,13 @@
+<%- include('../partials/head', { title: 'Customer receipts' }) %>
+<h1>Customer payments &amp; top-ups</h1>
+<div class="card"><h2>Awaiting confirmation (<%= pending.length %>)</h2>
+<p class="field-hint">Confirm only after the money is visible in the bank account. Card payments confirm automatically via the Stripe webhook.</p>
+<div class="table-wrap"><table><tr><th>Reference</th><th>Customer</th><th>For</th><th>Method</th><th class="num">Amount</th><th>Requested</th><th></th></tr>
+<% pending.forEach(function (p) { %><tr><td class="mono"><%= p.reference %></td><td><a href="/admin/customers/<%= p.customer_id %>"><%= p.customer_name %></a></td><td><%= humanize(p.purpose) %><%= p.is_auto_topup ? ' (auto)' : '' %></td><td><%= humanize(p.method) %></td><td class="num"><%= money(p.amount_cents) %></td><td><%= dt(p.created_at) %></td>
+<td><% if (['admin','finance'].includes(actor.role)) { %><form method="post" action="/admin/payments/<%= p.id %>/confirm" class="inline-form"><%- include('../partials/csrf') %><input type="date" name="received_date" value="<%= new Date().toISOString().slice(0,10) %>"><input name="bank_reference" placeholder="Bank ref"><button class="small" type="submit">Confirm received</button></form>
+<form method="post" action="/admin/payments/<%= p.id %>/fail" class="inline-form"><%- include('../partials/csrf') %><input name="reason" placeholder="Reason"><button class="small secondary" type="submit">Mark failed</button></form><% } %></td></tr><% }) %>
+<% if (!pending.length) { %><tr><td colspan="7" class="muted">Nothing awaiting confirmation.</td></tr><% } %></table></div></div>
+<div class="card"><h2>Recent</h2><div class="table-wrap"><table><tr><th>Reference</th><th>Customer</th><th class="num">Amount</th><th>Status</th><th>Confirmed</th><th></th></tr>
+<% recent.forEach(function (p) { %><tr><td class="mono"><%= p.reference %></td><td><%= p.customer_name %></td><td class="num"><%= money(p.amount_cents) %></td><td><%- include('../partials/status', { s: p.status }) %><% if (p.failure_reason) { %><br><small><%= p.failure_reason %></small><% } %></td><td><%= dt(p.confirmed_at) %></td>
+<td><% if (p.status === 'succeeded' && ['admin','finance'].includes(actor.role)) { %><form method="post" action="/admin/payments/<%= p.id %>/reverse" class="inline-form" data-confirm="Reverse this payment (dishonour/chargeback)?"><%- include('../partials/csrf') %><input name="reason" required placeholder="Reason"><button class="small danger" type="submit">Reverse</button></form><% } %></td></tr><% }) %></table></div></div>
+<%- include('../partials/foot') %>

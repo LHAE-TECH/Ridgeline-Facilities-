@@ -1,0 +1,12 @@
+<%- include('../partials/head', { title: 'Reports' }) %>
+<h1>Reports</h1>
+<div class="grid-2">
+<div class="card"><h2>General ledger balances</h2><div class="table-wrap"><table><tr><th>Account</th><th>Type</th><th class="num">Balance</th></tr>
+<% balances.forEach(function (b) { %><tr><td><%= b.name %><br><small class="mono"><%= b.code %></small></td><td><%= b.type %></td><td class="num"><%= money(b.balance_cents) %></td></tr><% }) %></table></div>
+<p class="field-hint">Customer prepaid balances are a liability until applied to an invoice. Revenue is recognised only on issued customer invoices.</p></div>
+<div class="card"><h2>Exports</h2>
+<form method="get" action="/admin/reports/journal.csv" class="stack"><div class="grid-2"><div><label>From</label><input type="date" name="from" value="<%= period.from %>"></div><div><label>To</label><input type="date" name="to" value="<%= period.to %>"></div></div><button type="submit" class="secondary">Download journal (CSV)</button></form>
+<p class="field-hint">Use the journal export for your accountant or to reconcile Xero (including prepaid top-ups and applications, which are not pushed to Xero automatically).</p>
+<h3>Other</h3><p><a href="/admin/audit">Audit log</a> · <a href="/admin/notifications">Email outbox</a> · <a href="/admin/integrations">Integrations</a><% if (actor.role === 'admin') { %> · <a href="/admin/users">Staff users</a><% } %></p></div>
+</div>
+<%- include('../partials/foot') %>

@@ -1,0 +1,47 @@
+<%- include('../partials/head', { title: job.ref }) %>
+<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><%= job.site_name %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <%= humanize(job.priority) %></small></div>
+<div><%- include('../partials/status', { s: job.status }) %></div></div>
+<% if (job.hold_reason) { %><div class="notice"><%= job.hold_reason %></div><% } %>
+<% if (job.status === 'pending_funds') { %><div class="notice err">This job is on hold until your prepaid account meets its requirements. <a href="/app/account">Top up now</a>; it will be released automatically once funds are confirmed.</div><% } %>
+<% if (job.status === 'awaiting_customer_approval') { %>
+<div class="notice">The estimated charge of <strong><%= money(job.estimate_total_cents) %></strong> exceeds your authority limit and needs approval.
+<% if (['owner','approver'].includes(actor.customerRole)) { %><form method="post" action="/app/jobs/<%= job.id %>/approve" class="inline-form"><%- include('../partials/csrf') %><button type="submit">Approve job</button></form><% } %></div>
+<% } %>
+<div class="grid-2">
+  <div class="card"><h2>Details</h2><dl class="kv">
+    <dt>Description</dt><dd><%= job.description %></dd>
+    <dt>Access</dt><dd><%= job.access_instructions || '—' %></dd>
+    <dt>Site contact</dt><dd><%= job.site_contact_name || '—' %> <%= job.site_contact_phone || '' %></dd>
+    <dt>Preferred window</dt><dd><%= dt(job.preferred_start) %> – <%= dt(job.preferred_end) %></dd>
+    <dt>PO number</dt><dd><%= job.po_number || '—' %></dd>
+    <dt>Estimate</dt><dd><%= money(job.estimate_total_cents) %> incl GST <small>(estimate only)</small></dd>
+    <dt>Contractor</dt><dd><%= job.contractor_trading_name || job.contractor_legal_name || 'Not yet assigned' %></dd>
+    <dt>Arrived</dt><dd><%= dt(job.arrived_at) %></dd><dt>Completed</dt><dd><%= dt(job.completed_at) %></dd>
+  </dl></div>
+  <div class="card"><h2>Progress</h2><ul class="timeline"><% events.forEach(function (e) { %><li><strong><%= humanize(e.event_type.replace('status.', '')) %></strong> <small><%= dt(e.occurred_at) %></small><% if (e.note) { %><br><small><%= e.note %></small><% } %></li><% }) %></ul></div>
+</div>
+<% if (quotes.length) { %><div class="card"><h2>Quotes &amp; variations</h2><div class="table-wrap"><table><tr><th>Type</th><th>Description</th><th class="num">Price incl GST</th><th>Status</th><th></th></tr>
+<% quotes.forEach(function (q) { %><tr><td><%= humanize(q.kind) %></td><td><%= q.description %></td><td class="num"><%= money(q.customer_total_cents) %></td><td><%- include('../partials/status', { s: q.status }) %></td><td>
+  <% if (q.status === 'sent_to_customer' && ['owner','approver'].includes(actor.customerRole)) { %>
+  <form method="post" action="/app/quotes/<%= q.id %>" class="inline-form"><%- include('../partials/csrf') %><input type="hidden" name="back" value="/app/jobs/<%= job.id %>">
+    <button name="decision" value="approve" type="submit" class="small">Approve</button><button name="decision" value="decline" type="submit" class="small secondary">Decline</button></form><% } %></td></tr><% }) %>
+</table></div></div><% } %>
+<% if (evidence.length) { %><div class="card"><h2>Photos</h2><div class="photos"><% evidence.forEach(function (e) { %><figure><a href="/files/<%= e.file_id %>" target="_blank" rel="noopener"><img src="/files/<%= e.file_id %>" alt="<%= humanize(e.kind) %>" loading="lazy"></a><figcaption><%= humanize(e.kind) %> · uploaded <%= dt(e.uploaded_at) %></figcaption></figure><% }) %></div></div><% } %>
+<% if (report) { %><div class="card"><div class="page-head"><h2>Completion report</h2><a class="btn secondary small" href="/app/jobs/<%= job.id %>/report.pdf">Download PDF</a></div>
+<p><%= report.work_performed %></p><p class="muted">Labour <%= Math.floor(report.labour_minutes/60) %> h <%= report.labour_minutes % 60 %> min<% if (report.issues_found) { %> · Issues found: <%= report.issues_found %><% } %></p></div><% } %>
+<% if (invoice) { %><div class="card"><h2>Invoice</h2><p><a href="/app/invoices/<%= invoice.id %>"><%= invoice.invoice_number %></a> · <%= money(invoice.total_cents) %> incl GST · prepaid credit applied <%= money(invoice.prepaid_applied_cents) %> · <%- include('../partials/status', { s: invoice.status }) %></p></div><% } %>
+<% if (disputes.length) { %><div class="card"><h2>Disputes</h2><% disputes.forEach(function (d) { %><p><%= date(d.created_at) %>: <%= d.reason %> <%- include('../partials/status', { s: d.status }) %><% if (d.resolution) { %><br><small>Resolution: <%= d.resolution %></small><% } %></p><% }) %></div><% } %>
+<% if (actor.customerRole !== 'viewer') { %>
+<div class="grid-2">
+  <% if (['pending_funds','awaiting_customer_approval','dispatch','offered','assigned','on_site'].includes(job.status)) { %>
+  <div class="card"><h2>Cancel job</h2><form method="post" action="/app/jobs/<%= job.id %>/cancel" class="stack" data-confirm="Cancel this job? Late cancellations may incur charges under your agreement."><%- include('../partials/csrf') %>
+    <input name="reason" required placeholder="Reason"><button type="submit" class="danger">Cancel job</button></form>
+    <% if (job.assigned_contractor_id) { %><p class="field-hint">A contractor is assigned. Cancelling close to attendance or after arrival may incur a cancellation charge.</p><% } %></div>
+  <% } %>
+  <% if (!['pending_funds','awaiting_customer_approval','cancelled'].includes(job.status)) { %>
+  <div class="card"><h2>Raise an issue</h2><form method="post" action="/app/jobs/<%= job.id %>/dispute" class="stack"><%- include('../partials/csrf') %>
+    <textarea name="reason" required rows="2" placeholder="What is wrong with the work or charges?"></textarea><button type="submit" class="secondary">Raise dispute</button></form></div>
+  <% } %>
+</div>
+<% } %>
+<%- include('../partials/foot') %>

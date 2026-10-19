@@ -1,0 +1,6 @@
+<%- include('../partials/head', { title: 'Invoices' }) %>
+<div class="page-head"><h1>Invoices</h1><a class="btn secondary" href="/app/statement.pdf">Account statement (PDF)</a></div>
+<div class="card"><div class="table-wrap"><table><tr><th>Invoice</th><th>Job</th><th>Issued</th><th class="num">Total incl GST</th><th class="num">Prepaid applied</th><th class="num">Payable</th><th>Status</th></tr>
+<% invoices.forEach(function (i) { %><tr><td><a href="/app/invoices/<%= i.id %>"><%= i.invoice_number %></a></td><td><%= i.job_ref %><br><small><%= i.title %></small></td><td><%= date(i.issue_date) %></td><td class="num"><%= money(i.total_cents) %></td><td class="num"><%= money(i.prepaid_applied_cents) %></td><td class="num"><%= money(i.total_cents - i.credited_cents - i.prepaid_applied_cents - i.amount_paid_cents + i.credit_to_prepaid_cents) %></td><td><%- include('../partials/status', { s: i.status }) %></td></tr><% }) %>
+<% if (!invoices.length) { %><tr><td colspan="7" class="muted">No invoices yet.</td></tr><% } %></table></div></div>
+<%- include('../partials/foot') %>

@@ -1,0 +1,14 @@
+<%- include('../partials/head', { title: 'Contacts' }) %>
+<h1>Authorised contacts</h1>
+<div class="card"><div class="table-wrap"><table><tr><th>Name</th><th>Email</th><th>Role</th><th class="num">Approval limit</th><th>Last sign-in</th></tr>
+<% users.forEach(function (u) { %><tr><td><%= u.name %></td><td><%= u.email %></td><td><%= humanize(u.customer_role) %></td><td class="num"><%= u.customer_role === 'owner' ? 'Unlimited' : u.customer_role === 'approver' ? (u.approval_limit_cents == null ? 'Unlimited' : money(u.approval_limit_cents)) : '—' %></td><td><%= dt(u.last_login_at) %></td></tr><% }) %></table></div></div>
+<% if (actor.customerRole === 'owner') { %>
+<div class="card"><h2>Add a contact</h2>
+<form method="post" action="/app/users" class="stack"><%- include('../partials/csrf') %>
+  <div class="grid-2"><div><label>Name</label><input name="name" required></div><div><label>Email</label><input name="email" type="email" required></div>
+  <div><label>Phone</label><input name="phone" type="tel"></div><div><label>Temporary password (10+ characters)</label><input name="password" type="password" minlength="10" required></div>
+  <div><label>Role</label><select name="customer_role"><option value="booker">Booker – can book jobs within the authority limit</option><option value="approver">Approver – can approve jobs, quotes and variations</option><option value="viewer">Viewer – read only</option><option value="owner">Owner – full control</option></select></div>
+  <div><label>Approval limit (approvers, optional)</label><input name="approval_limit" inputmode="decimal" placeholder="Unlimited"></div></div>
+  <button type="submit">Add contact</button></form></div>
+<% } %>
+<%- include('../partials/foot') %>

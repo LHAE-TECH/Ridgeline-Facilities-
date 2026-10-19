@@ -1,0 +1,36 @@
+<%- include('../partials/head', { title: 'Contractor payables' }) %>
+<h1>Contractor payables &amp; payments</h1>
+<p class="muted">Contractor payables are separate from customer invoices. A payable is paid only when a bank payment is confirmed with a reference and date, never when it is scheduled or exported.</p>
+<div class="card"><h2>Payables</h2><div class="table-wrap"><table><tr><th>Contractor / invoice</th><th class="num">Amount</th><th>Due</th><th>Status</th><th>Checks</th><th>Actions</th></tr>
+<% payables.forEach(function (p) { %><tr><td><a href="/admin/contractors/<%= p.contractor_id %>"><%= p.legal_name %></a><br><small><%= p.invoice_number %> · <a href="/admin/jobs/<%= p.job_id %>"><%= p.job_ref %></a></small></td>
+<td class="num"><%= money(payableAmount(p)) %><% if (p.adjustments_cents) { %><br><small>adj <%= money(p.adjustments_cents) %></small><% } %></td><td><%= date(p.due_date) %><% if (p.due_date < today && p.status !== 'paid') { %> <span class="badge err">Overdue</span><% } %></td>
+<td><%- include('../partials/status', { s: p.status }) %><% if (p.hold_reason) { %><br><small><%= p.hold_reason %></small><% } %></td>
+<td><small><%= p.documentation_ok ? 'Docs OK' : 'Docs incomplete' %><%= p.bank_account_number ? '' : ' · no bank account' %><% if (p.pending_adjustments) { %> · <%= p.pending_adjustments %> adj. pending<% } %><% if (p.warning) { %><br><span class="badge warn">Cash warning</span> <%= p.warning %><% } %></small></td>
+<td><% if (['admin','finance'].includes(actor.role)) { %>
+  <% if (p.status === 'awaiting_payment_approval') { %>
+    <% if (!p.documentation_ok) { %><form method="post" action="/admin/payables/<%= p.id %>/documentation" class="inline-form"><%- include('../partials/csrf') %><input name="note" required placeholder="Docs verified (what?)"><button class="small secondary" type="submit">Docs OK</button></form><% } %>
+    <form method="post" action="/admin/payables/<%= p.id %>/approve" class="inline-form"><%- include('../partials/csrf') %><button class="small" type="submit">Approve for payment</button></form>
+    <details><summary>Adjustment</summary><form method="post" action="/admin/payables/<%= p.id %>/adjustments" class="stack"><%- include('../partials/csrf') %><select name="direction"><option value="add">Add</option><option value="deduct">Deduct</option></select><input name="amount" inputmode="decimal" required placeholder="Amount incl GST"><input name="reason" required placeholder="Reason"><label class="check"><input type="checkbox" name="contractor_agreed"> Contractor has agreed (required for deductions)</label><button class="small secondary" type="submit">Propose</button></form></details>
+  <% } %>
+  <% if (['awaiting_payment_approval','approved_for_payment'].includes(p.status)) { %><form method="post" action="/admin/payables/<%= p.id %>/hold" class="inline-form"><%- include('../partials/csrf') %><input name="reason" required placeholder="Hold reason"><button class="small secondary" type="submit">Hold</button></form><% } %>
+  <% if (p.status === 'on_hold') { %><form method="post" action="/admin/payables/<%= p.id %>/release" class="inline-form"><%- include('../partials/csrf') %><button class="small secondary" type="submit">Release hold</button></form><% } %>
+<% } %></td></tr><% }) %>
+<% if (!payables.length) { %><tr><td colspan="6" class="muted">No payables.</td></tr><% } %></table></div></div>
+<% if (adjustments.length) { %><div class="card"><h2>Adjustments awaiting administrator approval</h2><% adjustments.forEach(function (a) { %>
+<form method="post" action="/admin/adjustments/<%= a.id %>/decide" class="inline-form"><%- include('../partials/csrf') %><span><%= a.legal_name %> · <%= a.job_ref %> · <%= money(a.amount_cents) %> · <%= a.reason %><%= a.contractor_agreed ? ' (contractor agreed)' : '' %></span>
+<% if (actor.role === 'admin') { %><button name="decision" value="approve" class="small" type="submit">Approve</button><button name="decision" value="reject" class="small secondary" type="submit">Reject</button><% } %></form><% }) %></div><% } %>
+<% if (['admin','finance'].includes(actor.role)) { %>
+<div class="grid-2">
+  <div class="card"><h2>Create payment batch</h2><form method="post" action="/admin/batches" class="stack"><%- include('../partials/csrf') %><label>Include approved payables due on or before</label><input type="date" name="due_on_or_before" required value="<%= today %>"><button type="submit">Create batch</button></form>
+  <h3>Recent batches</h3><% batches.forEach(function (b) { %><p><%= b.ref %> · <%= b.n %> payment(s) · <%= money(b.total) %> · <%- include('../partials/status', { s: b.status }) %> · <a href="/admin/batches/<%= b.id %>.csv">Export CSV</a></p><% }) %></div>
+  <div class="card"><h2>Reconcile bank statement</h2><form method="post" action="/admin/bank-statement" enctype="multipart/form-data" class="stack"><%- include('../partials/csrf') %>
+    <input type="file" name="statement" accept=".csv,text/csv"><textarea name="csv" rows="3" placeholder="…or paste CSV rows: date, amount, particulars, reference"></textarea><button type="submit" class="secondary">Match payments</button></form>
+    <p class="field-hint">Debits are matched to scheduled payments by exact amount plus the job reference, invoice number or payment ID in the statement text.</p></div>
+</div>
+<div class="card"><h2>Scheduled payments to confirm</h2><div class="table-wrap"><table><tr><th>Contractor</th><th>Invoice</th><th>Batch</th><th class="num">Amount</th><th>Confirm actual payment</th></tr>
+<% scheduled.forEach(function (s) { %><tr><td><%= s.legal_name %></td><td><%= s.invoice_number %></td><td><%= s.batch_ref || '—' %></td><td class="num"><%= money(s.amount_cents) %></td><td>
+<form method="post" action="/admin/contractor-payments/<%= s.id %>/confirm" class="inline-form"><%- include('../partials/csrf') %><input type="date" name="paid_date" required value="<%= today %>"><input name="reference" required placeholder="Bank payment reference"><button class="small" type="submit">Confirm paid</button></form>
+<form method="post" action="/admin/contractor-payments/<%= s.id %>/fail" class="inline-form"><%- include('../partials/csrf') %><input name="reason" placeholder="Failure reason"><button class="small secondary" type="submit">Failed</button></form></td></tr><% }) %>
+<% if (!scheduled.length) { %><tr><td colspan="5" class="muted">No scheduled payments.</td></tr><% } %></table></div></div>
+<% } %>
+<%- include('../partials/foot') %>

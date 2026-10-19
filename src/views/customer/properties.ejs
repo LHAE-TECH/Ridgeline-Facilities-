@@ -1,0 +1,46 @@
+<%- include('../partials/head', { title: 'Properties' }) %>
+<div class="page-head"><div><h1>Properties &amp; facilities</h1><small>Your sites, buildings and units. These drive your minimum balance assessment.</small></div><a class="btn secondary" href="/app/assessment">Minimum balance</a></div>
+<% sites.forEach(function (s) { const fs = facilities.filter(function (f) { return f.site_id === s.id; }); %>
+<div class="card">
+  <h2><%= s.name %></h2><p class="muted"><%= s.address %><%= s.suburb ? ', ' + s.suburb : '' %><%= s.city ? ', ' + s.city : '' %> · <%= s.region %></p>
+  <% if (s.access_notes) { %><p><strong>Access:</strong> <%= s.access_notes %></p><% } %>
+  <% if (s.hazards) { %><p><strong>Hazards:</strong> <%= s.hazards %></p><% } %>
+  <div class="table-wrap"><table><tr><th>Facility</th><th>Type</th><th class="num">Units</th><th>Unit records</th></tr>
+  <% fs.forEach(function (f) { const us = units.filter(function (u) { return u.facility_id === f.id; }); %>
+    <tr><td><%= f.name %></td><td><%= f.type_name %></td><td class="num"><%= f.unit_count %></td><td><small><%= us.map(function (u) { return u.label; }).join(', ') || '—' %></small></td></tr>
+  <% }) %>
+  <% if (!fs.length) { %><tr><td colspan="4" class="muted">No facilities yet.</td></tr><% } %>
+  </table></div>
+</div>
+<% }) %>
+<% if (actor.customerRole === 'owner') { %>
+<div class="grid-2">
+  <div class="card"><h2>Add a site</h2>
+    <form method="post" action="/app/sites" class="stack"><%- include('../partials/csrf') %>
+      <div><label>Site name</label><input name="name" required placeholder="e.g. Harbour View Apartments"></div>
+      <div><label>Street address</label><input name="address" required></div>
+      <div class="grid-2"><div><label>Suburb</label><input name="suburb"></div><div><label>City</label><input name="city"></div></div>
+      <div class="grid-2"><div><label>Region</label><select name="region" required><% regions.forEach(function (r) { %><option><%= r %></option><% }) %></select></div><div><label>Postcode</label><input name="postcode" inputmode="numeric"></div></div>
+      <div><label>Access instructions</label><textarea name="access_notes" rows="2" placeholder="Key safe code location, parking, building manager…"></textarea></div>
+      <div><label>Known hazards</label><textarea name="hazards" rows="2" placeholder="Asbestos register, dogs, confined spaces…"></textarea></div>
+      <button type="submit">Add site</button>
+    </form></div>
+  <div class="card"><h2>Add a facility / building</h2>
+    <% if (!sites.length) { %><p class="muted">Add a site first.</p><% } else { %>
+    <form method="post" action="/app/facilities" class="stack"><%- include('../partials/csrf') %>
+      <div><label>Site</label><select name="site_id" required><% sites.forEach(function (s) { %><option value="<%= s.id %>"><%= s.name %></option><% }) %></select></div>
+      <div><label>Facility type</label><select name="facility_type_id" required><% types.forEach(function (t) { %><option value="<%= t.id %>"><%= t.name %></option><% }) %></select></div>
+      <div class="grid-2"><div><label>Name</label><input name="name" required placeholder="e.g. Block A"></div><div><label>Number of units</label><input name="unit_count" type="number" min="1" required></div></div>
+      <div><label>Unit labels (optional)</label><textarea name="unit_labels" rows="2" placeholder="1A, 1B, 2A … (comma or line separated)"></textarea><div class="field-hint">Lets you select a specific unit when booking.</div></div>
+      <button type="submit">Add facility</button>
+    </form>
+    <% if (facilities.length) { %>
+    <h3>Add unit labels to an existing facility</h3>
+    <form method="post" action="/app/units" class="stack"><%- include('../partials/csrf') %>
+      <select name="facility_id"><% facilities.forEach(function (f) { %><option value="<%= f.id %>"><%= f.name %></option><% }) %></select>
+      <input name="labels" placeholder="3A, 3B, 3C"><button type="submit" class="secondary">Add units</button>
+    </form><% } %>
+    <% } %></div>
+</div>
+<% } %>
+<%- include('../partials/foot') %>

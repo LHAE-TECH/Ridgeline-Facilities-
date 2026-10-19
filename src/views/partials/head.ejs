@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><%= typeof title !== 'undefined' ? title + ' · ' : '' %>Ridgeline Facilities</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar"><div class="inner">
+  <a class="brand" href="/">Ridgeline Facilities<% if (actor) { %><span><%= orgName %></span><% } %></a>
+  <% if (actor) { %>
+  <nav class="nav" aria-label="Main">
+    <% const links = actor.role === 'customer'
+      ? [['/app','Dashboard'],['/app/jobs','Jobs'],['/app/jobs/new','Book a job'],['/app/account','Account'],['/app/invoices','Invoices'],['/app/properties','Properties']].concat(actor.customerRole === 'owner' ? [['/app/users','Contacts']] : [])
+      : actor.role === 'contractor'
+      ? [['/c','Jobs'],['/c/invoices','Invoices & payments'],['/c/profile','Profile & compliance']]
+      : [['/admin','Dashboard'],['/admin/dispatch','Dispatch'],['/admin/jobs','Jobs'],['/admin/customers','Customers'],['/admin/contractors','Contractors'],
+         ['/admin/contractor-invoices','Contractor invoices'],['/admin/customer-invoices','Customer invoices'],['/admin/payments','Receipts'],['/admin/payables','Payables'],
+         ['/admin/disputes','Disputes'],['/admin/refunds','Refunds'],['/admin/settings','Settings'],['/admin/reports','Reports']]; %>
+    <% links.forEach(function (l) { const active = l[0] === path || (l[0] !== '/app' && l[0] !== '/c' && l[0] !== '/admin' && path.indexOf(l[0]) === 0 && !(l[0] === '/app/jobs' && path === '/app/jobs/new')); %>
+      <a href="<%= l[0] %>" class="<%= active ? 'active' : '' %>"><%= l[1] %></a>
+    <% }) %>
+  </nav>
+  <form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="small" type="submit">Sign out</button></form>
+  <% } else { %>
+  <nav class="nav"><a href="/login">Sign in</a><a href="/register">Open an account</a><a href="/contractors/apply">Contractors</a></nav>
+  <% } %>
+</div></header>
+<main>
+<% flash.forEach(function (f) { %><div class="flash <%= f.type %>" role="status"><%= f.message %></div><% }) %>

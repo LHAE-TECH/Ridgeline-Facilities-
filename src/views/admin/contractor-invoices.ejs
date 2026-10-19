@@ -1,0 +1,7 @@
+<%- include('../partials/head', { title: 'Contractor invoices' }) %>
+<div class="page-head"><h1>Contractor invoices</h1>
+<form class="inline-form" method="get"><select name="status"><% [['open','Awaiting review'],['approved','Approved'],['rejected','Rejected'],['all','All']].forEach(function (s) { %><option value="<%= s[0] %>" <%= s[0] === status ? 'selected' : '' %>><%= s[1] %></option><% }) %></select><button class="secondary" type="submit">Show</button></form></div>
+<div class="card"><div class="table-wrap"><table><tr><th>Invoice</th><th>Contractor</th><th>Job</th><th>Date</th><th class="num">Total</th><th>Status</th></tr>
+<% invoices.forEach(function (i) { %><tr><td><a href="/admin/contractor-invoices/<%= i.id %>"><%= i.invoice_number %></a></td><td><%= i.contractor_legal_name %></td><td><%= i.job_ref %><br><small><%= i.customer_name %></small></td><td><%= date(i.invoice_date) %></td><td class="num"><%= money(i.total_cents) %></td><td><%- include('../partials/status', { s: i.status }) %><% if (i.status === 'flagged') { %><br><small><%= (i.validation.flags || []).length %> flag(s)</small><% } %></td></tr><% }) %>
+<% if (!invoices.length) { %><tr><td colspan="6" class="muted">Nothing here.</td></tr><% } %></table></div></div>
+<%- include('../partials/foot') %>

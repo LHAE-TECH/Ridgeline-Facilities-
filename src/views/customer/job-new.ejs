@@ -1,0 +1,45 @@
+<%- include('../partials/head', { title: 'Book a job' }) %>
+<div class="page-head"><div><h1>Book a maintenance job</h1><small>Available balance <%= money(position.availableCents) %> · agreed minimum <%= money(position.minimumCents) %></small></div></div>
+<% if (typeof error !== 'undefined' && error) { %><div class="flash error"><%= error %></div><% } %>
+<% if (customer.status !== 'active') { %><div class="notice">Your account is <%= humanize(customer.status) %>. Bookings are held until the account is active.</div><% } %>
+<% if (!sites.length) { %><div class="card"><p>Add a site on the <a href="/app/properties">Properties</a> page before booking.</p></div><% } else { %>
+<form method="post" action="/app/jobs" enctype="multipart/form-data" class="card stack" data-booking>
+  <%- include('../partials/csrf') %><input type="hidden" name="key" value="<%= key %>">
+  <div class="grid-3">
+    <div><label>Site</label><select name="site_id" required><% sites.forEach(function (s) { %><option value="<%= s.id %>" <%= form.site_id === s.id ? 'selected' : '' %>><%= s.name %></option><% }) %></select></div>
+    <div><label>Building / facility</label><select name="facility_id"><option value="">—</option><% facilities.forEach(function (f) { %><option value="<%= f.id %>" data-site="<%= f.site_id %>" <%= form.facility_id === f.id ? 'selected' : '' %>><%= f.name %></option><% }) %></select></div>
+    <div><label>Unit</label><select name="unit_id"><option value="">Common area / not unit-specific</option><% units.forEach(function (u) { %><option value="<%= u.id %>" data-site="<%= u.site_id %>" <%= form.unit_id === u.id ? 'selected' : '' %>><%= u.label %></option><% }) %></select></div>
+    <div><label>Job category</label><select name="trade_id" required><% trades.forEach(function (t) { %><option value="<%= t.id %>" <%= String(form.trade_id) === String(t.id) ? 'selected' : '' %>><%= t.name %></option><% }) %></select></div>
+    <div><label>Priority</label><select name="priority"><% [['routine','Routine'],['urgent','Urgent (within 24 h)'],['emergency','Emergency (immediate risk)']].forEach(function (p) { %><option value="<%= p[0] %>" <%= form.priority === p[0] ? 'selected' : '' %>><%= p[1] %></option><% }) %></select></div>
+    <div><label>Purchase order <%= customer.po_required ? '(required)' : '(optional)' %></label><input name="po_number" value="<%= form.po_number || '' %>" <%= customer.po_required ? 'required' : '' %>></div>
+  </div>
+  <div><label>Short title</label><input name="title" required maxlength="140" value="<%= form.title || '' %>" placeholder="e.g. Leaking kitchen tap"></div>
+  <div><label>Describe the problem</label><textarea name="description" required rows="4"><%= form.description || '' %></textarea></div>
+  <div><label>Access instructions</label><textarea name="access_instructions" rows="2" placeholder="Leave blank to use the site's standard instructions"><%= form.access_instructions || '' %></textarea></div>
+  <div class="grid-2">
+    <div><label>Site contact name</label><input name="site_contact_name" value="<%= form.site_contact_name || '' %>"></div>
+    <div><label>Site contact phone</label><input name="site_contact_phone" type="tel" value="<%= form.site_contact_phone || '' %>"></div>
+    <div><label>Preferred attendance from</label><input name="preferred_start" type="datetime-local" value="<%= form.preferred_start || '' %>"></div>
+    <div><label>Preferred attendance until</label><input name="preferred_end" type="datetime-local" value="<%= form.preferred_end || '' %>"></div>
+  </div>
+  <div><label>Photos of the problem (optional)</label><input type="file" name="photos" accept="image/*" capture="environment" multiple></div>
+  <% if (estimate) { const p = estimate.pricing; %>
+  <div class="card" style="background:var(--bg)">
+    <h2>Estimated charges</h2>
+    <p class="notice"><%= estimate.disclaimer %></p>
+    <div class="table-wrap"><table><tr><th>Item</th><th>Rate applied</th><th class="num">Excl GST</th></tr>
+      <% p.lines.forEach(function (l) { %><tr><td><%= l.description %></td><td><small><%= l.ruleCategory ? humanize(l.ruleCategory) : '' %> (<%= estimate.windowLabel %>)</small></td><td class="num"><%= money(l.amountExGstCents) %></td></tr><% }) %>
+      <tr><td colspan="2">Subtotal</td><td class="num"><%= money(p.subtotalExGstCents) %></td></tr>
+      <tr><td colspan="2">GST</td><td class="num"><%= money(p.gstCents) %></td></tr>
+      <tr class="total"><td colspan="2">Estimated total</td><td class="num"><%= money(p.totalCents) %></td></tr></table></div>
+    <% if (p.totalCents > customer.authority_limit_cents) { %><p class="notice">This estimate is above your account's authority limit of <%= money(customer.authority_limit_cents) %>, so an authorised approver must approve it before dispatch.</p><% } %>
+    <% if (p.totalCents > position.availableCents) { %><p class="notice err">Your available balance (<%= money(position.availableCents) %>) does not cover this estimate. The job will be held until you top up<% if (form.priority === 'emergency') { %>, unless emergency release applies<% } %>.</p><% } %>
+  </div>
+  <% } %>
+  <div class="actions">
+    <button type="submit" name="intent" value="estimate" class="secondary">Show estimate</button>
+    <button type="submit" name="intent" value="book">Book job</button>
+  </div>
+</form>
+<% } %>
+<%- include('../partials/foot') %>

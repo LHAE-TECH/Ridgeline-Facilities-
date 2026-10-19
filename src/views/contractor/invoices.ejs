@@ -1,0 +1,8 @@
+<%- include('../partials/head', { title: 'Invoices & payments' }) %>
+<h1>Invoices &amp; payments</h1>
+<p class="muted">Payments are shown as paid only once Ridgeline has confirmed the bank payment.</p>
+<div class="card"><div class="table-wrap"><table><tr><th>Invoice</th><th>Job</th><th>Date</th><th class="num">Total</th><th>Invoice status</th><th>Payment</th><th>Due</th></tr>
+<% invoices.forEach(function (i) { %><tr><td><a href="/c/invoices/<%= i.id %>"><%= i.invoice_number %></a></td><td><%= i.job_ref %></td><td><%= date(i.invoice_date) %></td><td class="num"><%= money(i.total_cents) %></td><td><%- include('../partials/status', { s: i.status }) %></td>
+<td><% if (i.payable_status) { %><%- include('../partials/status', { s: i.payable_status === 'paid' ? 'paid' : i.payable_status, label: i.payable_status === 'paid' ? 'Paid' : i.payable_status === 'in_batch' ? 'Scheduled' : i.payable_status === 'on_hold' ? 'On hold' : 'Approved, awaiting payment' }) %><% } else { %>—<% } %></td><td><%= date(i.due_date) %></td></tr><% }) %>
+<% if (!invoices.length) { %><tr><td colspan="7" class="muted">No invoices yet.</td></tr><% } %></table></div></div>
+<%- include('../partials/foot') %>

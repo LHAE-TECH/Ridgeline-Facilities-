@@ -1,0 +1,32 @@
+<%- include('partials/head', { title: 'Open an account' }) %>
+<div class="card" style="max-width:760px;margin:0 auto">
+  <h1>Open a prepaid maintenance account</h1>
+  <p class="muted">Your prepaid balance is held as credit on your account. Approved maintenance charges are deducted when jobs are invoiced, and you top up when required. It is not a non-refundable fee.</p>
+  <form method="post" action="/register" class="stack">
+    <%- include('partials/csrf') %>
+    <h3>Organisation</h3>
+    <div class="grid-2">
+      <div><label>Organisation name</label><input name="organisation" required></div>
+      <div><label>Legal name (if different)</label><input name="legal_name"></div>
+      <div><label>NZBN (optional)</label><input name="nzbn" inputmode="numeric"></div>
+      <div><label>GST number (optional)</label><input name="gst_number"></div>
+      <div><label>Portfolio type</label><select name="category" required>
+        <% categories.forEach(function (c) { %><option value="<%= c %>"><%= humanize(c) %></option><% }) %></select></div>
+      <div><label>Emergency cover required</label><select name="emergency_cover">
+        <option value="business_hours">Emergencies during business hours</option><option value="24x7">24/7 emergency response</option><option value="none">No emergency service</option></select></div>
+      <div><label>Billing email</label><input name="billing_email" type="email"></div>
+      <div><label>Phone</label><input name="phone" type="tel"></div>
+    </div>
+    <div><label>Billing address</label><textarea name="billing_address" rows="2"></textarea></div>
+    <h3>Your login</h3>
+    <div class="grid-2">
+      <div><label>Your name</label><input name="name" required autocomplete="name"></div>
+      <div><label>Your email</label><input name="email" type="email" required autocomplete="email"></div>
+      <div><label>Password (10+ characters)</label><input name="password" type="password" minlength="10" required autocomplete="new-password"></div>
+      <div><label>Confirm password</label><input name="password_confirm" type="password" minlength="10" required autocomplete="new-password"></div>
+    </div>
+    <label class="check"><input type="checkbox" name="agree" required> I have read the <a href="/privacy">privacy statement</a> and understand the prepaid account works as described above, subject to our service agreement.</label>
+    <button type="submit">Create account</button>
+  </form>
+</div>
+<%- include('partials/foot') %>

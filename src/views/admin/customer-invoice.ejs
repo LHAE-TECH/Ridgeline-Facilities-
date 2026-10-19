@@ -1,0 +1,32 @@
+<%- include('../partials/head', { title: invoice.invoice_number || 'Draft invoice' }) %>
+<div class="page-head"><div><h1><%= invoice.invoice_number ? 'Invoice ' + invoice.invoice_number : 'Draft customer invoice' %></h1><small><a href="/admin/customers/<%= customer.id %>"><%= customer.name %></a> · job <a href="/admin/jobs/<%= invoice.job_id %>"><%= invoice.job_ref %></a></small></div>
+<div class="actions"><%- include('../partials/status', { s: invoice.status }) %><a class="btn secondary small" href="/admin/customer-invoices/<%= invoice.id %>/pdf" target="_blank">PDF</a></div></div>
+<div class="stats">
+  <div class="stat"><div class="label">Contractor cost ex GST</div><div class="value"><%= money(invoice.contractor_cost_ex_gst_cents) %></div></div>
+  <div class="stat"><div class="label">Customer price ex GST</div><div class="value"><%= money(invoice.subtotal_ex_gst_cents) %></div></div>
+  <div class="stat"><div class="label">Markup / gross profit</div><div class="value"><%= money(invoice.markup_cents) %></div><div class="sub">Margin <%= invoice.subtotal_ex_gst_cents ? (invoice.markup_cents * 100 / invoice.subtotal_ex_gst_cents).toFixed(2) + '%' : '—' %></div></div>
+  <div class="stat"><div class="label">GST / total</div><div class="value"><%= money(invoice.total_cents) %></div><div class="sub">GST <%= money(invoice.gst_cents) %></div></div>
+</div>
+<div class="card"><h2>Pricing (internal view)</h2><div class="table-wrap"><table><tr><th>Line</th><th class="num">Contractor cost</th><th class="num">Customer ex GST</th><th>How it was priced</th></tr>
+<% lines.forEach(function (l) { %><tr><td><%= l.description %><br><small><%= qtyFmt(l.quantity_milli) %> × <%= money(l.unit_price_cents) %></small></td><td class="num"><%= money(l.contractor_cost_cents) %></td><td class="num"><%= money(l.amount_ex_gst_cents) %></td><td><small><%= l.pricing_explanation %></small></td></tr><% }) %>
+<tr><td colspan="2">Subtotal</td><td class="num"><%= money(invoice.subtotal_ex_gst_cents) %></td><td></td></tr><tr><td colspan="2">GST</td><td class="num"><%= money(invoice.gst_cents) %></td><td><small><%= invoice.pricing.gstExplanation %></small></td></tr>
+<tr class="total"><td colspan="2">Total</td><td class="num"><%= money(invoice.total_cents) %></td><td></td></tr></table></div></div>
+<% if (invoice.status === 'draft') { %>
+<div class="card"><h2>Issue invoice</h2>
+  <p>Prepaid balance <%= money(position.balanceCents) %>. <%= customer.auto_apply_prepaid ? 'Up to ' + money(Math.min(position.balanceCents, invoice.total_cents)) + ' of prepaid credit will be applied; any remainder becomes a receivable due in ' + customer.payment_terms_days + ' days.' : 'Prepaid credit is NOT applied automatically for this customer; the full amount becomes a receivable.' %></p>
+  <% if (disputes.length) { %><p class="notice err">An open dispute blocks invoicing.</p><% } %>
+  <% if (['admin','finance'].includes(actor.role)) { %><div class="actions">
+  <form method="post" action="/admin/customer-invoices/<%= invoice.id %>/issue" data-confirm="Issue this invoice and apply prepaid credit?"><%- include('../partials/csrf') %><button type="submit">Issue invoice &amp; email customer</button></form>
+  <form method="post" action="/admin/customer-invoices/<%= invoice.id %>/recalculate"><%- include('../partials/csrf') %><button type="submit" class="secondary">Recalculate from current rules</button></form></div><% } %>
+</div>
+<% } else { %>
+<div class="card"><h2>Settlement</h2><dl class="kv"><dt>Issued</dt><dd><%= date(invoice.issue_date) %> · due <%= date(invoice.due_date) %> · emailed <%= invoice.sent_at ? dt(invoice.sent_at) : 'not yet sent' %></dd>
+  <dt>Prepaid credit applied</dt><dd><%= money(invoice.prepaid_applied_cents) %></dd><dt>Payments received</dt><dd><%= money(invoice.amount_paid_cents) %></dd>
+  <dt>Credit notes</dt><dd><%= money(invoice.credited_cents) %><% if (invoice.credit_to_prepaid_cents) { %> (<%= money(invoice.credit_to_prepaid_cents) %> returned to prepaid)<% } %></dd><dt>Outstanding</dt><dd><strong><%= money(outstanding) %></strong></dd></dl>
+  <% creditNotes.forEach(function (c) { %><p><%= c.credit_note_number %>: <%= money(c.total_cents) %> – <%= c.reason %></p><% }) %>
+  <% if (['admin','finance'].includes(actor.role)) { %><div class="grid-2">
+    <% if (outstanding > 0) { %><form method="post" action="/admin/customer-invoices/<%= invoice.id %>/apply-prepaid"><%- include('../partials/csrf') %><button type="submit" class="secondary">Apply available prepaid credit</button></form><% } %>
+    <form method="post" action="/admin/customer-invoices/<%= invoice.id %>/credit-note" class="stack" data-confirm="Issue a credit note?"><%- include('../partials/csrf') %><div class="grid-2"><input name="amount" inputmode="decimal" placeholder="Credit amount ex GST" required><input name="reason" placeholder="Reason" required></div><button type="submit" class="secondary">Issue credit note</button></form>
+  </div><% } %></div>
+<% } %>
+<%- include('../partials/foot') %>

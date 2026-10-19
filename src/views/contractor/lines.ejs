@@ -1,0 +1,12 @@
+<div id="<%= id %>">
+  <div class="line-row" data-row>
+    <div><label>Category</label><select name="line_category"><% categories.forEach(function (c) { %><option value="<%= c %>"><%= humanize(c) %></option><% }) %></select></div>
+    <div class="desc"><label>Description</label><input name="line_description" placeholder="e.g. Labour – replace washer"></div>
+    <div><label>Qty / hours</label><input name="line_quantity" inputmode="decimal" placeholder="1"></div>
+    <div><label>Rate (ex GST)</label><input name="line_rate" inputmode="decimal" placeholder="0.00"></div>
+    <div><label>Time window</label><select name="line_window"><% windows.forEach(function (w) { %><option value="<%= w %>"><%= windowLabel(w) %></option><% }) %></select></div>
+    <div><button class="small secondary" data-remove-row type="button" aria-label="Remove line">✕</button></div>
+    <% if (typeof variations !== 'undefined' && variations.length) { %><div class="desc"><label>Approved variation (for variation lines)</label><select name="line_variation"><option value="">—</option><% variations.forEach(function (v) { %><option value="<%= v.id %>"><%= v.description %> (<%= money(v.contractor_cost_cents) %>)</option><% }) %></select></div><% } else { %><input type="hidden" name="line_variation" value=""><% } %>
+  </div>
+</div>
+<button class="small secondary" type="button" data-add-row="<%= id %>">+ Add line</button>

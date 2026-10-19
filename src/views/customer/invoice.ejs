@@ -1,0 +1,17 @@
+<%- include('../partials/head', { title: invoice.invoice_number }) %>
+<div class="page-head"><div><h1>Invoice <%= invoice.invoice_number %></h1><small><%= invoice.job_ref %>: <%= invoice.job_title %></small></div><a class="btn secondary" href="/app/invoices/<%= invoice.id %>/pdf">Download PDF</a></div>
+<div class="card"><dl class="kv"><dt>Issued</dt><dd><%= date(invoice.issue_date) %></dd><dt>Due</dt><dd><%= date(invoice.due_date) %></dd><dt>PO</dt><dd><%= invoice.po_number || '—' %></dd><dt>Status</dt><dd><%- include('../partials/status', { s: invoice.status }) %></dd></dl></div>
+<div class="card"><div class="table-wrap"><table><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount excl GST</th></tr>
+<% lines.forEach(function (l) { %><tr><td><%= l.description %><br><small><%= l.pricing_explanation %></small></td><td class="num"><%= qtyFmt(l.quantity_milli) %></td><td class="num"><%= money(l.unit_price_cents) %></td><td class="num"><%= money(l.amount_ex_gst_cents) %></td></tr><% }) %>
+<tr><td colspan="3">Subtotal excl GST</td><td class="num"><%= money(invoice.subtotal_ex_gst_cents) %></td></tr>
+<tr><td colspan="3">GST</td><td class="num"><%= money(invoice.gst_cents) %></td></tr>
+<tr class="total"><td colspan="3">Invoice total incl GST</td><td class="num"><%= money(invoice.total_cents) %></td></tr>
+<tr><td colspan="3">Prepaid credit applied</td><td class="num">-<%= money(invoice.prepaid_applied_cents) %></td></tr>
+<% if (invoice.amount_paid_cents) { %><tr><td colspan="3">Payments received</td><td class="num">-<%= money(invoice.amount_paid_cents) %></td></tr><% } %>
+<% creditNotes.forEach(function (c) { %><tr><td colspan="3">Credit note <%= c.credit_note_number %>: <%= c.reason %></td><td class="num">-<%= money(c.total_cents) %></td></tr><% }) %>
+<% if (invoice.credit_to_prepaid_cents) { %><tr><td colspan="3">Credit returned to prepaid balance</td><td class="num"><%= money(invoice.credit_to_prepaid_cents) %></td></tr><% } %>
+<tr class="total"><td colspan="3">Amount payable</td><td class="num"><%= money(outstanding) %></td></tr></table></div>
+<% if (outstanding > 0) { %><p>Please pay by <%= date(invoice.due_date) %> using reference <strong><%= invoice.invoice_number %></strong>.</p>
+<% if (stripe && actor.customerRole !== 'viewer') { %><form method="post" action="/app/invoices/<%= invoice.id %>/pay"><%- include('../partials/csrf') %><input type="hidden" name="key" value="<%= key %>"><button type="submit">Pay <%= money(outstanding) %> by card</button></form><% } %>
+<% } else { %><p class="notice ok">Nothing further to pay.</p><% } %></div>
+<%- include('../partials/foot') %>

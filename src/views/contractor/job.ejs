@@ -1,0 +1,87 @@
+<%- include('../partials/head', { title: job.ref }) %>
+<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><%= job.trade_name %> · <%= humanize(job.priority) %></small></div><div><%- include('../partials/status', { s: job.status }) %></div></div>
+<% if (offer) { %>
+  <div class="notice">Offered to you until <%= dt(offer.expires_at) %>.
+    <form method="post" action="/c/offers/<%= offer.id %>/accept" class="inline-form"><%- include('../partials/csrf') %><button type="submit">Accept job</button></form></div>
+<% } %>
+<div class="grid-2">
+  <div class="card"><h2>Job</h2><dl class="kv">
+    <dt>Site</dt><dd><%= assigned ? job.site_name + ', ' + job.site_address : job.site_region %></dd>
+    <% if (assigned) { %><dt>Unit</dt><dd><%= job.unit_label || 'Common area' %></dd>
+    <dt>Access</dt><dd><%= job.access_instructions || '—' %></dd>
+    <dt>Site contact</dt><dd><%= job.site_contact_name || '—' %> <% if (job.site_contact_phone) { %><a href="tel:<%= job.site_contact_phone %>"><%= job.site_contact_phone %></a><% } %></dd>
+    <dt>Hazards</dt><dd><%= job.site_hazards || 'None recorded. Complete your own site risk assessment.' %></dd><% } %>
+    <dt>Description</dt><dd><%= job.description %></dd>
+    <dt>Preferred</dt><dd><%= dt(job.preferred_start) %> – <%= dt(job.preferred_end) %></dd>
+    <% if (job.requires_quote) { %><dt>Quote</dt><dd>Required before work starts</dd><% } %>
+  </dl></div>
+  <% if (assigned) { %>
+  <div class="card"><h2>Attendance</h2><dl class="kv"><dt>Accepted</dt><dd><%= dt(job.accepted_at) %></dd><dt>Arrived</dt><dd><%= dt(job.arrived_at) %></dd><dt>Started</dt><dd><%= dt(job.started_at) %></dd><dt>Completed</dt><dd><%= dt(job.completed_at) %></dd></dl>
+    <p class="field-hint">Times are recorded by Ridgeline's server when you tap the button. Your location is captured only if your device allows it.</p>
+    <% if (job.status === 'assigned') { %><form method="post" action="/c/jobs/<%= job.id %>/arrive" data-geo><%- include('../partials/csrf') %><button type="submit">I've arrived on site</button></form><% } %>
+    <% if (job.status === 'on_site') { %><form method="post" action="/c/jobs/<%= job.id %>/start" data-geo><%- include('../partials/csrf') %><button type="submit">Start work</button></form><% } %>
+  </div>
+  <% } %>
+</div>
+<% if (assigned) { %>
+  <% if (['on_site','in_progress','evidence_rejected','evidence_submitted','evidence_approved','invoice_submitted'].includes(job.status)) { %>
+  <div class="card"><h2>Evidence</h2>
+    <% if (status) { %><p>Before photos: <%= status.counts.before_photo || 0 %> · After photos: <%= status.counts.after_photo || 0 %> · Receipts: <%= status.counts.receipt || 0 %></p><% } %>
+    <div class="photos"><% evidence.forEach(function (e) { %><figure><a href="/files/<%= e.file_id %>" target="_blank" rel="noopener"><img src="/files/<%= e.file_id %>" alt="<%= e.kind %>" loading="lazy"></a><figcaption><%= humanize(e.kind) %> · <%= dt(e.uploaded_at) %></figcaption></figure><% }) %></div>
+    <form method="post" action="/c/jobs/<%= job.id %>/evidence" enctype="multipart/form-data" class="stack" data-geo><%- include('../partials/csrf') %>
+      <div class="grid-2"><div><label>Type</label><select name="kind">
+        <% if (['on_site','in_progress','evidence_rejected'].includes(job.status)) { %><option value="before_photo">Before photo</option><% } %>
+        <% if (['in_progress','evidence_rejected'].includes(job.status)) { %><option value="after_photo">After photo</option><option value="signature">Signed acknowledgement</option><% } %>
+        <option value="receipt">Materials receipt</option><option value="document">Other document</option></select></div>
+      <div><label>Caption</label><input name="caption"></div></div>
+      <input type="file" name="files" accept="image/*,application/pdf" capture="environment" multiple required data-device-time>
+      <button type="submit" class="secondary">Upload</button>
+    </form>
+  </div>
+  <% } %>
+  <% if (['in_progress','evidence_rejected'].includes(job.status)) { %>
+  <div class="card"><h2>Complete job</h2>
+    <% if (job.status === 'evidence_rejected' && reports[0]) { %><div class="notice err">Ridgeline requested more information: <%= reports[0].review_notes %></div><% } %>
+    <% if (status && !status.complete) { %><div class="notice">Still required: <%= status.missing.join('; ') %></div><% } %>
+    <form method="post" action="/c/jobs/<%= job.id %>/complete" class="stack" data-geo><%- include('../partials/csrf') %>
+      <div><label>Work performed</label><textarea name="work_performed" required rows="3"><%= reports[0] ? reports[0].work_performed : '' %></textarea></div>
+      <div class="grid-3"><div><label>Labour hours (total)</label><input name="labour_hours" inputmode="decimal" required></div><div><label>Workers</label><input name="workers" type="number" min="1" value="1"></div><div></div></div>
+      <h3>Materials used</h3>
+      <div id="materials"><div class="grid-3" data-row><div><label>Material</label><input name="material_description"></div><div><label>Quantity</label><input name="material_quantity" inputmode="decimal"></div><div><label>Unit cost (ex GST)</label><input name="material_cost" inputmode="decimal"></div></div></div>
+      <button class="small secondary" type="button" data-add-row="materials">+ Add material</button>
+      <div><label>Issues found</label><textarea name="issues_found" rows="2"></textarea></div>
+      <div><label>Site notes</label><textarea name="site_notes" rows="2"></textarea></div>
+      <div><label>Acknowledged on site by <%= job.acknowledgement_required ? '(required)' : '(optional)' %></label><input name="acknowledged_by_name" <%= job.acknowledgement_required ? 'required' : '' %> placeholder="Name of customer / site representative"></div>
+      <button type="submit">Submit completion report</button>
+    </form>
+  </div>
+  <% } %>
+  <% if (['assigned','on_site','in_progress','evidence_rejected'].includes(job.status)) { %>
+  <details class="card"><summary>Submit a quote or variation</summary>
+    <form method="post" action="/c/jobs/<%= job.id %>/quote" class="stack"><%- include('../partials/csrf') %>
+      <div><label>Type</label><select name="kind"><option value="variation">Variation (additional work)</option><option value="quote">Quote</option></select></div>
+      <div><label>Description of additional work</label><textarea name="description" required rows="2"></textarea></div>
+      <%- include('lines', { id: 'quote-lines', variations: [] }) %>
+      <button type="submit" class="secondary">Submit for approval</button>
+    </form></details>
+  <% } %>
+  <% if (quotes.length) { %><div class="card"><h2>Quotes &amp; variations</h2><% quotes.forEach(function (q) { %><p><%= humanize(q.kind) %>: <%= q.description %> · your cost <%= money(q.contractor_cost_cents) %> · <%- include('../partials/status', { s: q.status }) %></p><% }) %></div><% } %>
+  <% const liveInvoice = invoices.find(function (i) { return ['submitted','flagged','approved'].includes(i.status); }); %>
+  <% if (!liveInvoice && (['evidence_submitted','evidence_approved'].includes(job.status) || (job.status === 'cancelled' && job.cancellation_billable))) { %>
+  <div class="card"><h2>Invoice Ridgeline Facilities</h2>
+    <p class="field-hint">Invoice <strong>Ridgeline Facilities</strong>, not the customer. Charges must match your agreed rate card<% if (rateCard) { %> (labour <%= money(rateCard.labour_rate_cents) %>/h, callout <%= money(rateCard.callout_cents) %>, emergency callout <%= money(rateCard.emergency_callout_cents) %>, after-hours ×<%= rateCard.after_hours_multiplier_bps / 10000 %>)<% } %>. <%= contractor.gst_registered ? 'GST at 15% is added automatically (GST ' + contractor.gst_number + ').' : 'You are not GST-registered, so no GST is charged.' %></p>
+    <form method="post" action="/c/jobs/<%= job.id %>/invoice" enctype="multipart/form-data" class="stack"><%- include('../partials/csrf') %><input type="hidden" name="key" value="<%= key %>">
+      <div class="grid-3"><div><label>Your invoice number</label><input name="invoice_number" required></div><div><label>Invoice date</label><input name="invoice_date" type="date" required value="<%= new Date().toISOString().slice(0,10) %>"></div>
+      <div><label>Invoice total incl GST (check)</label><input name="total" inputmode="decimal" placeholder="Leave blank to calculate"></div></div>
+      <%- include('lines', { id: 'invoice-lines', variations: quotes.filter(function (q) { return q.kind === 'variation' && q.status === 'approved'; }) }) %>
+      <div><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
+      <div><label>Attach your invoice document (PDF/photo)</label><input type="file" name="invoice_file" accept="application/pdf,image/*"></div>
+      <% if (contractor.gst_registered) { %><label class="check"><input type="checkbox" name="is_tax_invoice" checked> This is a valid tax invoice / taxable supply information</label><% } %>
+      <button type="submit">Submit invoice to Ridgeline</button>
+    </form></div>
+  <% } %>
+  <% if (invoices.length) { %><div class="card"><h2>Invoices</h2><% invoices.forEach(function (i) { %><p><a href="/c/invoices/<%= i.id %>"><%= i.invoice_number %></a> · <%= money(i.total_cents) %> · <%- include('../partials/status', { s: i.status }) %><% if (i.rejection_reason) { %> – <%= i.rejection_reason %><% } %></p><% }) %></div><% } %>
+  <% if (!['closed','cancelled'].includes(job.status)) { %><details class="card"><summary>Raise an issue with Ridgeline</summary><form method="post" action="/c/jobs/<%= job.id %>/dispute" class="stack"><%- include('../partials/csrf') %><textarea name="reason" required></textarea><button type="submit" class="secondary">Send</button></form></details><% } %>
+  <details class="card"><summary>Job history</summary><ul class="timeline"><% events.forEach(function (e) { %><li><%= humanize(e.event_type) %> <small><%= dt(e.occurred_at) %></small><% if (e.note) { %><br><small><%= e.note %></small><% } %></li><% }) %></ul></details>
+<% } %>
+<%- include('../partials/foot') %>

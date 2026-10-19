@@ -1,0 +1,73 @@
+<%- include('../partials/head', { title: 'Settings' }) %>
+<h1>Settings</h1>
+<p class="muted">All cost assumptions, coverage factors, thresholds and pricing rules are configured here. Changes are audit-logged. <%= actor.role !== 'admin' ? 'Only administrators can change settings.' : '' %></p>
+<nav class="actions" style="margin-bottom:1rem"><a class="btn secondary small" href="#pricing">Pricing rules</a><a class="btn secondary small" href="#facility-types">Facility assumptions</a><a class="btn secondary small" href="#coverage">Coverage factors</a><a class="btn secondary small" href="#general">General</a><a class="btn secondary small" href="#trades">Trades</a><a class="btn secondary small" href="#holidays">Holidays</a></nav>
+
+<div class="card" id="pricing"><h2>Customer pricing rules</h2>
+<p class="field-hint">Each contractor cost line is priced by exactly one approved rule (most specific scope wins: customer contract, then trade, then priority). Premiums never stack. Standard: customer price = contractor cost × 1.35. New rules start as drafts and must be approved by an administrator and disclosed in the customer's agreement.</p>
+<div class="table-wrap"><table><tr><th>Category</th><th>Scope</th><th>Method</th><th class="num">Ref. contractor rate</th><th>Status</th><th></th></tr>
+<% rules.forEach(function (r) { %><tr><td><%= categoryLabels[r.category] %><br><small><%= r.description || '' %></small></td>
+<td><small><%= r.customer_name ? 'Customer: ' + r.customer_name : 'All customers' %><%= r.trade_name ? ' · ' + r.trade_name : '' %><%= r.priority ? ' · ' + r.priority : '' %></small></td>
+<td><%= r.method === 'markup' ? 'Markup ' + bps(r.markup_bps) : r.method === 'fixed_rate' ? 'Customer rate ' + money(r.customer_rate_cents) + '/' + r.unit : r.method === 'standard_multiplier' ? 'Standard × ' + mult(r.customer_multiplier_bps) : 'Minimum ' + money(r.minimum_cents) %></td>
+<td class="num"><%= money(r.reference_contractor_rate_cents) %></td><td><%- include('../partials/status', { s: r.status }) %><% if (r.approved_by_name) { %><br><small><%= r.approved_by_name %></small><% } %></td>
+<td><% if (actor.role === 'admin') { %><% if (r.status === 'draft') { %><form method="post" action="/admin/pricing-rules/<%= r.id %>/approve" class="inline-form" data-confirm="Approve this rule? It replaces any approved rule with the same scope."><%- include('../partials/csrf') %><button class="small" type="submit">Approve</button></form><% } %>
+<% if (r.status !== 'retired') { %><form method="post" action="/admin/pricing-rules/<%= r.id %>/retire" class="inline-form"><%- include('../partials/csrf') %><button class="small secondary" type="submit">Retire</button></form><% } %><% } %></td></tr><% }) %></table></div>
+<% if (['admin','finance'].includes(actor.role)) { %>
+<details><summary>Propose a new rule</summary>
+<form method="post" action="/admin/pricing-rules" class="stack" data-rule><%- include('../partials/csrf') %>
+  <div class="grid-3"><div><label>Category</label><select name="category"><% categories.forEach(function (c) { %><option value="<%= c %>"><%= categoryLabels[c] %></option><% }) %></select></div>
+  <div><label>Customer contract (optional)</label><select name="customer_id"><option value="">All customers</option><% customers.forEach(function (c) { %><option value="<%= c.id %>"><%= c.name %></option><% }) %></select></div>
+  <div><label>Trade (optional)</label><select name="trade_id"><option value="">All trades</option><% trades.forEach(function (t) { %><option value="<%= t.id %>"><%= t.name %></option><% }) %></select></div>
+  <div><label>Priority (optional)</label><select name="priority"><option value="">Any</option><option>routine</option><option>urgent</option><option>emergency</option></select></div>
+  <div><label>Method</label><select name="method"><option value="markup">Markup on contractor cost</option><option value="fixed_rate">Fixed customer rate</option><option value="standard_multiplier">Multiplier on standard customer price</option><option value="minimum">Minimum job charge</option></select></div>
+  <div data-method="markup"><label>Markup %</label><input name="markup" value="35"></div>
+  <div data-method="fixed_rate"><label>Customer rate (ex GST)</label><input name="customer_rate" inputmode="decimal"></div>
+  <div data-method="standard_multiplier"><label>Multiplier</label><input name="multiplier" placeholder="1.5"></div>
+  <div data-method="minimum"><label>Minimum (ex GST)</label><input name="minimum" inputmode="decimal"></div>
+  <div><label>Unit</label><select name="unit"><option>each</option><option>hour</option><option>km</option><option>job</option></select></div>
+  <div><label>Reference contractor rate (for estimates)</label><input name="reference_rate" inputmode="decimal"></div></div>
+  <div><label>Description (as disclosed to customers)</label><input name="description"></div>
+  <button type="submit" class="secondary">Create draft rule</button></form></details><% } %></div>
+
+<div class="card" id="facility-types"><h2>Facility assessment assumptions</h2>
+<p class="field-hint">Monthly spend per facility = units × jobs/unit/month × (average job cost + callout share × average callout) × emergency loading + planned cost per unit, then marked up and GST added.</p>
+<% facilityTypes.forEach(function (f) { %>
+<details><summary><%= f.name %> <%= f.is_active ? '' : '(inactive)' %> <small class="muted">· <%= f.jobs_per_unit_per_month %> jobs/<%= f.unit_label %>/mo · <%= money(f.avg_contractor_cost_cents) %> avg</small></summary>
+<form method="post" action="/admin/facility-types/<%= f.id %>" class="stack card"><%- include('../partials/csrf') %>
+  <div class="grid-3"><div><label>Name</label><input name="name" value="<%= f.name %>"></div><div><label>Jobs per <%= f.unit_label %> per month</label><input name="jobs_per_unit_per_month" value="<%= f.jobs_per_unit_per_month %>"></div>
+  <div><label>Average contractor cost per job</label><input name="avg_contractor_cost" value="<%= dollarsInput(f.avg_contractor_cost_cents) %>"></div><div><label>Callout share %</label><input name="callout_share" value="<%= f.callout_share_bps / 100 %>"></div>
+  <div><label>Average callout cost</label><input name="avg_callout_cost" value="<%= dollarsInput(f.avg_callout_cost_cents) %>"></div><div><label>Emergency share %</label><input name="emergency_share" value="<%= f.emergency_share_bps / 100 %>"></div>
+  <div><label>Emergency cost multiplier</label><input name="emergency_multiplier" value="<%= f.emergency_cost_multiplier_bps / 10000 %>"></div><div><label>Planned cost per <%= f.unit_label %>/month</label><input name="planned_monthly_cost" value="<%= dollarsInput(f.planned_monthly_cost_per_unit_cents) %>"></div>
+  <div><label class="check"><input type="checkbox" name="is_active" <%= f.is_active ? 'checked' : '' %>> Active</label></div></div>
+  <% if (actor.role === 'admin') { %><button type="submit" class="secondary">Save assumptions</button><% } %></form></details>
+<% }) %>
+<% if (actor.role === 'admin') { %><details><summary>Add a custom facility type</summary><form method="post" action="/admin/facility-types" class="stack card"><%- include('../partials/csrf') %>
+  <div class="grid-3"><div><label>Code</label><input name="code" required></div><div><label>Name</label><input name="name" required></div><div><label>Category</label><select name="category"><% ['residential','commercial','body_corporate','industrial','retail','mixed','custom'].forEach(function (c) { %><option><%= c %></option><% }) %></select></div>
+  <div><label>Unit label</label><input name="unit_label" value="unit"></div><div><label>Jobs per unit per month</label><input name="jobs_per_unit_per_month" required></div><div><label>Average contractor cost</label><input name="avg_contractor_cost" required></div>
+  <div><label>Callout share %</label><input name="callout_share" value="100"></div><div><label>Average callout</label><input name="avg_callout_cost" value="85"></div><div><label>Emergency share %</label><input name="emergency_share" value="10"></div></div>
+  <button type="submit" class="secondary">Add facility type</button></form></details><% } %></div>
+
+<div class="card" id="coverage"><h2>Coverage factors</h2><p class="field-hint">Required minimum balance = estimated monthly spend × coverage factor, by customer category and service agreement.</p>
+<div class="table-wrap"><table><tr><th>Category</th><th>Service level</th><th class="num">Factor</th><th>Description</th></tr><% coverage.forEach(function (c) { %><tr><td><%= c.customer_category %></td><td><%= c.service_level %></td><td class="num"><%= mult(c.factor_bps) %></td><td><%= c.description %></td></tr><% }) %></table></div>
+<% if (actor.role === 'admin') { %><form method="post" action="/admin/coverage-factors" class="inline-form"><%- include('../partials/csrf') %><select name="customer_category"><% customerCategories.forEach(function (c) { %><option><%= c %></option><% }) %></select><select name="service_level"><option>standard</option><option>priority</option></select><input name="factor" placeholder="e.g. 3.0" required><input name="description" placeholder="Description"><button class="small secondary" type="submit">Save factor</button></form><% } %></div>
+
+<div class="card" id="general"><h2>General settings</h2>
+<form method="post" action="/admin/settings" class="stack"><%- include('../partials/csrf') %>
+<div class="grid-2"><% Object.keys(defaults).forEach(function (k) { const v = settings[k]; const def = defaults[k]; %>
+  <div><label><%= humanize(k) %></label>
+  <% if (typeof def === 'boolean') { %><select name="s_<%= k %>"><option value="true" <%= v ? 'selected' : '' %>>Yes</option><option value="false" <%= !v ? 'selected' : '' %>>No</option></select>
+  <% } else if (typeof def === 'number') { %><input name="s_<%= k %>" value="<%= v %>" inputmode="numeric">
+  <% } else { %><textarea name="s_<%= k %>" rows="<%= k === 'company' ? 8 : 3 %>" class="mono"><%= JSON.stringify(v, null, 1) %></textarea><% } %>
+  <% if (descriptions[k]) { %><div class="field-hint"><%= descriptions[k] %></div><% } %></div>
+<% }) %></div>
+<% if (actor.role === 'admin') { %><button type="submit">Save settings</button><% } %></form></div>
+
+<div class="card" id="trades"><h2>Trades</h2><div class="table-wrap"><table><tr><th>Code</th><th>Name</th><th>Specialist</th><th>Required documents</th><th class="num">Est. hours</th><th>Before photo</th></tr>
+<% trades.forEach(function (t) { %><tr><td class="mono"><%= t.code %></td><td><%= t.name %></td><td><%= t.is_specialist ? 'Yes' : '' %></td><td><small><%= t.required_documents.join(', ') %></small></td><td class="num"><%= t.default_estimate_hours %></td><td><%= t.before_photo_required ? 'Required' : 'Optional' %></td></tr><% }) %></table></div>
+<% if (actor.role === 'admin') { %><details><summary>Add or update a trade</summary><form method="post" action="/admin/trades" class="stack"><%- include('../partials/csrf') %><div class="grid-3"><input name="code" placeholder="code" required><input name="name" placeholder="Name" required><input name="default_estimate_hours" placeholder="Estimate hours" value="1.5"><input name="required_documents" placeholder="Required document code (e.g. ewrb_licence)"></div>
+<label class="check"><input type="checkbox" name="is_specialist"> Specialist trade</label><label class="check"><input type="checkbox" name="before_photo_required" checked> Before photo required</label><button class="small secondary" type="submit">Save trade</button></form></details><% } %></div>
+
+<div class="card" id="holidays"><h2>Public holidays</h2><p class="field-hint">Used to apply public holiday rates. Add regional anniversary days for the regions you serve.</p>
+<div class="table-wrap"><table><% holidays.forEach(function (h) { %><tr><td><%= date(h.holiday_date) %></td><td><%= h.name %></td></tr><% }) %></table></div>
+<% if (actor.role === 'admin') { %><form method="post" action="/admin/holidays" class="inline-form"><%- include('../partials/csrf') %><input type="date" name="date" required><input name="name" placeholder="Name" required><button class="small secondary" type="submit">Add holiday</button></form><% } %></div>
+<%- include('../partials/foot') %>

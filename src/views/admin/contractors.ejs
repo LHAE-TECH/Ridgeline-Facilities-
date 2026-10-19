@@ -1,0 +1,6 @@
+<%- include('../partials/head', { title: 'Contractors' }) %>
+<div class="page-head"><h1>Contractors</h1><a class="btn" href="/admin/contractors/new">Add contractor</a></div>
+<div class="card"><div class="table-wrap"><table><tr><th>Contractor</th><th>Status</th><th>Trades</th><th>Regions</th><th>Next expiry</th><th>Docs to verify</th></tr>
+<% contractors.forEach(function (k) { %><tr><td><a href="/admin/contractors/<%= k.id %>"><%= k.legal_name %></a><br><small><%= k.email %></small></td><td><%- include('../partials/status', { s: k.status }) %><%= k.available ? '' : ' (unavailable)' %></td><td><small><%= k.trades || '—' %></small></td><td><small><%= k.service_regions.join(', ') %></small></td><td><%= date(k.next_expiry) %></td><td><%= k.pending_docs || '' %></td></tr><% }) %>
+</table></div></div>
+<%- include('../partials/foot') %>

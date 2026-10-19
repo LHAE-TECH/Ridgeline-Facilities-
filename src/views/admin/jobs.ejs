@@ -1,0 +1,7 @@
+<%- include('../partials/head', { title: 'Jobs' }) %>
+<div class="page-head"><h1>Jobs</h1>
+<form class="inline-form" method="get"><input name="q" value="<%= q %>" placeholder="Ref, title or customer"><select name="status"><option value="">All statuses</option><% Object.keys(statuses).forEach(function (s) { %><option value="<%= s %>" <%= s === status ? 'selected' : '' %>><%= statuses[s] %></option><% }) %></select><button class="secondary" type="submit">Filter</button></form></div>
+<div class="card"><div class="table-wrap"><table><tr><th>Job</th><th>Customer</th><th>Trade</th><th>Priority</th><th>Contractor</th><th>Status</th><th>Booked</th></tr>
+<% jobs.forEach(function (j) { %><tr><td><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a><br><small><%= j.title %></small></td><td><%= j.customer_name %></td><td><%= j.trade_name %></td><td><%= humanize(j.priority) %></td><td><%= j.contractor_name || '—' %></td><td><%- include('../partials/status', { s: j.status }) %><% if (j.hold_reason) { %><br><small><%= j.hold_reason %></small><% } %></td><td><%= date(j.created_at) %></td></tr><% }) %>
+</table></div></div>
+<%- include('../partials/foot') %>

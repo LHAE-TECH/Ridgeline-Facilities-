@@ -1,0 +1,4 @@
+<% const okS = ['closed','customer_invoiced','evidence_approved','invoice_approved','paid','approved','verified','succeeded','confirmed','active','sent','synced','resolved'];
+   const warnS = ['pending_funds','awaiting_customer_approval','evidence_rejected','flagged','on_hold','pending','partially_paid','issued','draft','awaiting_payment_approval','proposed','queued','open','investigating','sent_to_customer','submitted','pending_deposit','pending_assessment','not_sent_unconfigured','skipped_unconfigured'];
+   const errS = ['cancelled','rejected','failed','reversed','suspended','void','declined','expired']; %>
+<span class="badge <%= okS.includes(s) ? 'ok' : warnS.includes(s) ? 'warn' : errS.includes(s) ? 'err' : '' %>"><%= typeof label !== 'undefined' ? label : statusLabel(s) === s ? humanize(s) : statusLabel(s) %></span>

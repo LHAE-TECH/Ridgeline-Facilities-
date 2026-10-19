@@ -1,0 +1,16 @@
+<%- include('../partials/head', { title: 'Minimum balance' }) %>
+<div class="page-head"><div><h1>Prepaid account minimum balance</h1><small>How your recommended minimum is calculated</small></div>
+<% if (actor.customerRole === 'owner') { %><form method="post" action="/app/assessment"><%- include('../partials/csrf') %><button type="submit" class="secondary">Recalculate from my facilities</button></form><% } %></div>
+<div class="stats">
+  <div class="stat"><div class="label">Agreed minimum balance</div><div class="value"><%= money(customer.agreed_minimum_balance_cents) %></div><div class="sub"><%= customer.custom_arrangement ? 'Custom arrangement' : customer.agreed_minimum_balance_cents ? 'Standard account' : 'Not yet agreed' %></div></div>
+  <% if (assessment) { %><div class="stat"><div class="label">Latest recommendation</div><div class="value"><%= money(assessment.recommended_cents) %></div><div class="sub"><%- include('../partials/status', { s: assessment.status }) %></div></div><% } %>
+</div>
+<% if (!assessment) { %><div class="card"><p>No assessment yet. Add your facilities on the <a href="/app/properties">Properties</a> page, then recalculate.</p></div><% } else { const b = assessment.breakdown; %>
+<% if (assessment.requires_custom) { %><div class="notice">Your portfolio exceeds the standard maximum. Ridgeline will agree a custom arrangement with you rather than limiting the amount automatically.</div><% } %>
+<div class="card"><h2>Calculation</h2><ol><% b.steps.forEach(function (s) { %><li><%= s %></li><% }) %></ol>
+<p class="muted">Formula: Required minimum balance = Estimated monthly maintenance spend × Coverage factor.</p></div>
+<div class="card"><h2>By facility</h2><div class="table-wrap"><table><tr><th>Facility</th><th class="num">Units</th><th class="num">Jobs / month</th><th class="num">Monthly (ex GST)</th><th>How</th></tr>
+<% b.lines.forEach(function (l) { %><tr><td><%= l.facility %><br><small><%= l.facilityType %></small></td><td class="num"><%= l.units %></td><td class="num"><%= l.jobsPerMonth %></td><td class="num"><%= money(l.customerMonthlyExGstCents) %></td><td><small><%= l.explanation %></small></td></tr><% }) %>
+</table></div></div>
+<% } %>
+<%- include('../partials/foot') %>

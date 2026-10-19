@@ -1,0 +1,10 @@
+<%- include('../partials/head', { title: invoice.invoice_number }) %>
+<div class="page-head"><div><h1>Invoice <%= invoice.invoice_number %></h1><small>To Ridgeline Facilities · job <%= invoice.job_ref %></small></div><%- include('../partials/status', { s: invoice.status }) %></div>
+<% if (invoice.rejection_reason) { %><div class="notice err">Rejected: <%= invoice.rejection_reason %>. Submit a corrected invoice with a new number from the job page.</div><% } %>
+<div class="card"><div class="table-wrap"><table><tr><th>Line</th><th>Window</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr>
+<% lines.forEach(function (l) { %><tr><td><%= humanize(l.category) %>: <%= l.description %></td><td><%= windowLabel(l.time_window) %></td><td class="num"><%= qtyFmt(l.quantity_milli) %></td><td class="num"><%= money(l.unit_rate_cents) %></td><td class="num"><%= money(l.amount_cents) %></td></tr><% }) %>
+<tr><td colspan="4">Subtotal</td><td class="num"><%= money(invoice.subtotal_ex_gst_cents) %></td></tr><tr><td colspan="4">GST</td><td class="num"><%= money(invoice.gst_cents) %></td></tr>
+<tr class="total"><td colspan="4">Total</td><td class="num"><%= money(invoice.total_cents) %></td></tr></table></div></div>
+<% if (payable) { %><div class="card"><h2>Payment</h2><dl class="kv"><dt>Approved amount</dt><dd><%= money(payableAmount(payable)) %><% if (payable.adjustments_cents) { %> (includes approved adjustments of <%= money(payable.adjustments_cents) %>)<% } %></dd><dt>Due</dt><dd><%= date(payable.due_date) %></dd><dt>Status</dt><dd><%- include('../partials/status', { s: payable.status }) %><% if (payable.hold_reason) { %> – <%= payable.hold_reason %><% } %></dd></dl>
+<% payments.forEach(function (p) { %><p><%= p.status === 'confirmed' ? 'Paid ' + date(p.paid_date) + ' · reference ' + p.payment_reference : humanize(p.status) %> · <%= money(p.amount_cents) %></p><% }) %></div><% } %>
+<%- include('../partials/foot') %>

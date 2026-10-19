@@ -1,0 +1,76 @@
+<%- include('../partials/head', { title: job.ref }) %>
+<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><a href="/admin/customers/<%= job.customer_id %>"><%= job.customer_name %></a> · <%= job.site_name %>, <%= job.site_region %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <%= humanize(job.priority) %></small></div>
+<div><%- include('../partials/status', { s: job.status }) %></div></div>
+<% if (job.hold_reason) { %><div class="notice"><%= job.hold_reason %></div><% } %>
+<div class="grid-2">
+  <div class="card"><h2>Details</h2><dl class="kv">
+    <dt>Description</dt><dd><%= job.description %></dd><dt>Access</dt><dd><%= job.access_instructions || '—' %></dd>
+    <dt>Site contact</dt><dd><%= job.site_contact_name || '—' %> <%= job.site_contact_phone || '' %></dd><dt>PO</dt><dd><%= job.po_number || '—' %></dd>
+    <dt>Preferred</dt><dd><%= dt(job.preferred_start) %> – <%= dt(job.preferred_end) %></dd>
+    <dt>Respond / attend by</dt><dd><%= dt(job.respond_by) %> / <%= dt(job.attend_by) %></dd>
+    <dt>Estimate</dt><dd><%= money(job.estimate_total_cents) %> incl GST · authorised contractor cost <%= money(job.authorised_contractor_cost_cents) %></dd>
+    <dt>Commitment</dt><dd><%= commitment ? money(commitment.amount_cents) + ' (' + commitment.status + ')' : '—' %></dd>
+    <dt>Contractor</dt><dd><%= job.contractor_trading_name || job.contractor_legal_name || '—' %></dd>
+    <% if (job.funding_exception_id) { %><dt>Funding</dt><dd>Released under funding exception</dd><% } %>
+    <% if (job.cancelled_at) { %><dt>Cancelled</dt><dd><%= dt(job.cancelled_at) %>: <%= job.cancellation_reason %> <%= job.cancellation_billable ? '(billable)' : '' %></dd><% } %>
+  </dl></div>
+  <div class="card"><h2>Actions</h2>
+    <% if (job.status === 'pending_funds' && ['admin','finance'].includes(actor.role)) { %>
+      <form method="post" action="/admin/jobs/<%= job.id %>/funding-exception" class="stack"><%- include('../partials/csrf') %><label>Release despite insufficient funds (authorised exception)</label><input name="reason" required placeholder="Reason / authority"><button type="submit" class="secondary">Grant funding exception</button></form>
+    <% } %>
+    <% if (['dispatch','offered'].includes(job.status)) { %>
+      <form method="post" action="/admin/jobs/<%= job.id %>/dispatch"><%- include('../partials/csrf') %><button type="submit" class="secondary">Offer to eligible contractors</button></form>
+    <% } %>
+    <% if (['dispatch','offered','assigned','on_site','in_progress'].includes(job.status) && actor.role !== 'finance') { %>
+      <form method="post" action="/admin/jobs/<%= job.id %>/assign" class="stack"><%- include('../partials/csrf') %>
+        <label><%= job.assigned_contractor_id ? 'Reassign to' : 'Assign to' %></label>
+        <select name="contractor_id"><% candidates.forEach(function (c) { %><option value="<%= c.contractorId %>"><%= c.eligible ? '✓' : '✗' %> <%= c.name %><%= c.distanceKm != null ? ' (' + c.distanceKm + ' km)' : '' %> – <%= c.activeJobs %> active</option><% }) %></select>
+        <input name="override_reason" placeholder="Override reason (administrators only, for ineligible contractors)">
+        <button type="submit" class="secondary">Assign</button></form>
+    <% } %>
+    <% if (['assigned','on_site','in_progress'].includes(job.status) && actor.role !== 'finance') { %>
+      <form method="post" action="/admin/jobs/<%= job.id %>/unassign" class="inline-form"><%- include('../partials/csrf') %><input name="reason" required placeholder="Reason"><button type="submit" class="secondary">Unassign</button></form>
+    <% } %>
+    <% if (['pending_funds','awaiting_customer_approval','dispatch','offered','assigned','on_site'].includes(job.status)) { %>
+      <form method="post" action="/admin/jobs/<%= job.id %>/cancel" class="inline-form" data-confirm="Cancel this job?"><%- include('../partials/csrf') %><input name="reason" required placeholder="Cancellation reason"><button type="submit" class="danger">Cancel</button></form>
+    <% } %>
+    <% if (job.status === 'customer_invoiced') { %>
+      <h3>Close job</h3><% if (checks.canClose) { %><form method="post" action="/admin/jobs/<%= job.id %>/close"><%- include('../partials/csrf') %><button type="submit">Close job</button></form><% } else { %><p class="muted">Outstanding: <%= checks.outstanding.join('; ') %></p><% } %>
+    <% } %>
+    <form method="post" action="/admin/jobs/<%= job.id %>/dispute" class="inline-form"><%- include('../partials/csrf') %><input name="reason" required placeholder="Open a dispute / investigation"><button type="submit" class="secondary">Open dispute</button></form>
+  </div>
+</div>
+<details class="card"><summary>Contractor eligibility (<%= candidates.filter(function (c) { return c.eligible; }).length %> eligible)</summary><div class="table-wrap"><table><tr><th>Contractor</th><th>Eligible</th><th>Reasons</th></tr>
+<% candidates.forEach(function (c) { %><tr><td><a href="/admin/contractors/<%= c.contractorId %>"><%= c.name %></a></td><td><%= c.eligible ? 'Yes' : 'No' %></td><td><small><%= c.reasons.join('; ') %></small></td></tr><% }) %></table></div></details>
+<% if (offers.length) { %><div class="card"><h2>Offers</h2><div class="table-wrap"><table><tr><th>Contractor</th><th>Offered</th><th>Expires</th><th>Status</th></tr>
+<% offers.forEach(function (o) { %><tr><td><%= o.legal_name %></td><td><%= dt(o.offered_at) %></td><td><%= dt(o.expires_at) %></td><td><%- include('../partials/status', { s: o.status }) %><% if (o.decline_reason) { %> – <%= o.decline_reason %><% } %></td></tr><% }) %></table></div></div><% } %>
+<div class="card"><h2>Evidence</h2>
+  <div class="photos"><% evidence.forEach(function (e) { %><figure><a href="/files/<%= e.file_id %>" target="_blank" rel="noopener"><img src="/files/<%= e.file_id %>" alt="<%= e.kind %>" loading="lazy" style="<%= e.withdrawn_at ? 'opacity:.35' : '' %>"></a>
+    <figcaption><%= humanize(e.kind) %> · server <%= dt(e.uploaded_at) %><% if (e.device_captured_at) { %> · device <%= dt(e.device_captured_at) %><% } %><% if (e.lat) { %> · GPS <%= Number(e.lat).toFixed(4) %>, <%= Number(e.lng).toFixed(4) %><% } %><br><span class="mono">sha256 <%= e.sha256.slice(0, 12) %>…</span>
+    <% if (e.withdrawn_at) { %><br><strong>Withdrawn:</strong> <%= e.withdrawn_reason %><% } else { %>
+    <form method="post" action="/admin/evidence/<%= e.id %>/withdraw" class="inline-form"><%- include('../partials/csrf') %><input type="hidden" name="back" value="/admin/jobs/<%= job.id %>"><input name="reason" required placeholder="Withdraw reason"><button class="small secondary" type="submit">Withdraw</button></form><% } %></figcaption></figure><% }) %></div>
+  <% reports.forEach(function (r) { %>
+  <div class="card" style="background:var(--bg)"><h3>Completion report v<%= r.version %> <%- include('../partials/status', { s: r.review_status }) %></h3>
+    <p><%= r.work_performed %></p><p class="muted">Labour <%= Math.floor(r.labour_minutes/60) %> h <%= r.labour_minutes % 60 %> min × <%= r.workers %> worker(s) · submitted <%= dt(r.submitted_at) %><% if (r.acknowledged_by_name) { %> · acknowledged by <%= r.acknowledged_by_name %><% } %></p>
+    <% if (r.materials.length) { %><p>Materials: <%= r.materials.map(function (m) { return m.description + ' × ' + qtyFmt(m.quantityMilli) + ' @ ' + money(m.unitCostCents); }).join('; ') %></p><% } %>
+    <% if (r.issues_found) { %><p>Issues: <%= r.issues_found %></p><% } %><% if (r.site_notes) { %><p>Notes: <%= r.site_notes %></p><% } %>
+    <% r.review_flags.forEach(function (f) { %><p class="notice"><%= f.message %></p><% }) %>
+    <% if (r.review_notes) { %><p><strong>Review:</strong> <%= r.review_notes %></p><% } %>
+  </div><% }) %>
+  <% if (job.status === 'evidence_submitted' && actor.role !== 'finance') { %>
+  <form method="post" action="/admin/jobs/<%= job.id %>/evidence-review" class="stack"><%- include('../partials/csrf') %>
+    <textarea name="notes" rows="2" placeholder="Notes (required when requesting more evidence)"></textarea>
+    <div class="actions"><button name="decision" value="approve" type="submit">Approve evidence</button><button name="decision" value="reject" type="submit" class="secondary">Request more evidence / reject</button></div></form>
+  <% } %>
+</div>
+<% if (quotes.length) { %><div class="card"><h2>Quotes &amp; variations</h2><div class="table-wrap"><table><tr><th>Type</th><th>Description</th><th class="num">Contractor cost</th><th class="num">Customer incl GST</th><th>Status</th><th></th></tr>
+<% quotes.forEach(function (q) { %><tr><td><%= humanize(q.kind) %></td><td><%= q.description %></td><td class="num"><%= money(q.contractor_cost_cents) %></td><td class="num"><%= money(q.customer_total_cents) %></td><td><%- include('../partials/status', { s: q.status }) %></td><td>
+<% if (q.status === 'submitted') { %><form method="post" action="/admin/quotes/<%= q.id %>/review" class="inline-form"><%- include('../partials/csrf') %><input type="hidden" name="back" value="/admin/jobs/<%= job.id %>"><button name="decision" value="send" class="small" type="submit">Send to customer</button><button name="decision" value="withdraw" class="small secondary" type="submit">Withdraw</button></form><% } %></td></tr><% }) %></table></div></div><% } %>
+<div class="grid-2">
+  <div class="card"><h2>Contractor invoices</h2><% contractorInvoices.forEach(function (i) { %><p><a href="/admin/contractor-invoices/<%= i.id %>"><%= i.invoice_number %></a> · <%= money(i.total_cents) %> · <%- include('../partials/status', { s: i.status }) %></p><% }) %><% if (!contractorInvoices.length) { %><p class="muted">None</p><% } %></div>
+  <div class="card"><h2>Customer invoice</h2><% if (customerInvoice) { %><p><a href="/admin/customer-invoices/<%= customerInvoice.id %>"><%= customerInvoice.invoice_number || 'Draft' %></a> · <%= money(customerInvoice.total_cents) %> · <%- include('../partials/status', { s: customerInvoice.status }) %></p><% } else { %><p class="muted">None</p><% } %>
+  <% disputes.forEach(function (d) { %><p>Dispute (<%= d.raised_by_party %>): <%= d.reason %> <%- include('../partials/status', { s: d.status }) %></p><% }) %></div>
+</div>
+<div class="card"><h2>Timeline (server timestamps)</h2><ul class="timeline"><% events.forEach(function (e) { %><li><strong><%= e.event_type %></strong> <small><%= dt(e.occurred_at) %> · <%= e.actor_name || 'System' %><% if (e.lat) { %> · GPS <%= Number(e.lat).toFixed(5) %>, <%= Number(e.lng).toFixed(5) %> (±<%= e.accuracy_m || '?' %> m)<% } %></small><% if (e.note) { %><br><small><%= e.note %></small><% } %></li><% }) %></ul></div>
+<details class="card"><summary>Audit log</summary><div class="table-wrap"><table><% auditRows.forEach(function (a) { %><tr><td><%= dt(a.occurred_at) %></td><td><%= a.actor_name || a.actor_role %></td><td><%= a.action %></td><td class="mono"><%= JSON.stringify(a.details) %></td></tr><% }) %></table></div></details>
+<%- include('../partials/foot') %>

@@ -1,0 +1,7 @@
+<%- include('../partials/head', { title: 'Customer invoices' }) %>
+<div class="page-head"><h1>Customer invoices</h1>
+<form class="inline-form" method="get"><select name="status"><option value="">All</option><% ['draft','issued','partially_paid','paid'].forEach(function (s) { %><option value="<%= s %>" <%= s === status ? 'selected' : '' %>><%= humanize(s) %></option><% }) %></select><button class="secondary" type="submit">Filter</button></form></div>
+<div class="card"><div class="table-wrap"><table><tr><th>Invoice</th><th>Customer</th><th>Job</th><th class="num">Contractor cost</th><th class="num">Sell ex GST</th><th class="num">Markup</th><th class="num">Total incl GST</th><th class="num">Outstanding</th><th>Status</th></tr>
+<% invoices.forEach(function (i) { %><tr><td><a href="/admin/customer-invoices/<%= i.id %>"><%= i.invoice_number || 'Draft' %></a></td><td><%= i.customer_name %></td><td><%= i.job_ref %></td><td class="num"><%= money(i.contractor_cost_ex_gst_cents) %></td><td class="num"><%= money(i.subtotal_ex_gst_cents) %></td><td class="num"><%= money(i.markup_cents) %></td><td class="num"><%= money(i.total_cents) %></td><td class="num"><%= i.status === 'draft' ? '—' : money(outstandingCents(i)) %></td><td><%- include('../partials/status', { s: i.status }) %></td></tr><% }) %>
+</table></div></div>
+<%- include('../partials/foot') %>

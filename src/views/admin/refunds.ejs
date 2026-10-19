@@ -1,0 +1,9 @@
+<%- include('../partials/head', { title: 'Refunds' }) %>
+<h1>Prepaid balance refunds</h1>
+<div class="card"><div class="table-wrap"><table><tr><th>Customer</th><th class="num">Amount</th><th>Reason</th><th>Requested</th><th>Status</th><th></th></tr>
+<% refunds.forEach(function (r) { %><tr><td><a href="/admin/customers/<%= r.customer_id %>"><%= r.customer_name %></a><br><small>Balance <%= money(r.prepaid_balance_cents) %></small></td><td class="num"><%= money(r.amount_cents) %></td><td><%= r.reason %></td><td><%= date(r.created_at) %></td><td><%- include('../partials/status', { s: r.status }) %><% if (r.paid_reference) { %><br><small>Paid <%= date(r.paid_date) %> · <%= r.paid_reference %></small><% } %></td><td>
+<% if (['admin','finance'].includes(actor.role)) { %>
+<% if (r.status === 'requested') { %><form method="post" action="/admin/refunds/<%= r.id %>/decide" class="inline-form"><%- include('../partials/csrf') %><input name="note" placeholder="Note"><button name="decision" value="approve" class="small" type="submit">Approve</button><button name="decision" value="reject" class="small secondary" type="submit">Reject</button></form><% } %>
+<% if (r.status === 'approved') { %><form method="post" action="/admin/refunds/<%= r.id %>/paid" class="inline-form"><%- include('../partials/csrf') %><input type="date" name="paid_date" required value="<%= new Date().toISOString().slice(0,10) %>"><input name="reference" required placeholder="Bank reference"><button class="small" type="submit">Record as paid</button></form><% } %>
+<% } %></td></tr><% }) %></table></div></div>
+<%- include('../partials/foot') %>

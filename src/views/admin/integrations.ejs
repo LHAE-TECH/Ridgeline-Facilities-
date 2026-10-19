@@ -1,0 +1,9 @@
+<%- include('../partials/head', { title: 'Integrations' }) %>
+<h1>Integrations</h1>
+<div class="card"><div class="table-wrap"><table><tr><th>Integration</th><th>Mode</th><th>Detail</th></tr>
+<% Object.keys(status).forEach(function (k) { const s = status[k]; %><tr><td><%= humanize(k) %></td><td><span class="badge <%= s.mode === 'live' ? 'ok' : s.mode === 'test' ? 'warn' : 'err' %>"><%= s.mode %></span></td><td><%= s.detail %></td></tr><% }) %></table></div></div>
+<div class="card"><div class="page-head"><h2>Accounting sync queue (Xero)</h2><% if (actor.role === 'admin') { %><form method="post" action="/admin/integrations/requeue"><%- include('../partials/csrf') %><button class="secondary small" type="submit">Re-queue failed / skipped</button></form><% } %></div>
+<div class="table-wrap"><table><tr><th>Entity</th><th>Status</th><th>Attempts</th><th>External ID</th><th>Error</th></tr>
+<% sync.forEach(function (s) { %><tr><td><%= humanize(s.entity_type) %><br><small class="mono"><%= s.entity_id %></small></td><td><%- include('../partials/status', { s: s.status }) %></td><td><%= s.attempts %></td><td class="mono"><%= s.external_id || '—' %></td><td><small><%= s.last_error || '' %></small></td></tr><% }) %></table></div></div>
+<div class="card"><h2>Webhooks received</h2><div class="table-wrap"><table><% webhooks.forEach(function (w) { %><tr><td><%= w.provider %></td><td class="mono"><%= w.event_id %></td><td><%= w.event_type %></td><td><%= w.result %></td><td><%= dt(w.received_at) %></td></tr><% }) %></table></div></div>
+<%- include('../partials/foot') %>

@@ -1,0 +1,56 @@
+<%- include('../partials/head', { title: 'Account' }) %>
+<div class="page-head"><div><h1>Prepaid maintenance account</h1><small><%= customer.account_ref %></small></div><a class="btn secondary" href="/app/statement.pdf">Download statement (PDF)</a></div>
+<% if (paymentStatus === 'processing') { %><div class="flash">Card payment submitted. Your balance updates once the payment provider confirms it; this can take a minute.</div><% } %>
+<% if (paymentStatus === 'cancelled') { %><div class="flash error">Card payment was cancelled. No funds were taken.</div><% } %>
+<div class="stats">
+  <div class="stat"><div class="label">Agreed minimum</div><div class="value"><%= money(position.minimumCents) %></div></div>
+  <div class="stat"><div class="label">Opening prepaid balance</div><div class="value"><%= money(totals.opening) %></div></div>
+  <div class="stat <%= position.belowMinimum ? 'alert' : '' %>"><div class="label">Current balance</div><div class="value"><%= money(position.balanceCents) %></div><% if (position.belowMinimum) { %><div class="sub">Below minimum by <%= money(position.shortfallToMinimumCents) %></div><% } %></div>
+  <div class="stat"><div class="label">Committed to booked jobs</div><div class="value"><%= money(position.committedCents) %></div></div>
+  <div class="stat"><div class="label">Available</div><div class="value"><%= money(position.availableCents) %></div></div>
+  <div class="stat"><div class="label">Top-ups &amp; deposits</div><div class="value"><%= money(totals.topups) %></div></div>
+  <div class="stat"><div class="label">Maintenance charges</div><div class="value"><%= money(totals.charges) %></div></div>
+  <div class="stat"><div class="label">Refunds &amp; adjustments</div><div class="value"><%= money(totals.adjustments) %></div></div>
+</div>
+<% if (actor.customerRole !== 'viewer') { %>
+<div class="grid-2">
+  <div class="card"><h2>Top up</h2>
+    <form method="post" action="/app/topups" class="stack"><%- include('../partials/csrf') %><input type="hidden" name="key" value="<%= key %>">
+      <div><label>Amount (NZD)</label><input name="amount" inputmode="decimal" required value="<%= position.shortfallToMinimumCents ? dollarsInput(position.shortfallToMinimumCents) : '' %>"></div>
+      <div><label>Payment method</label><select name="method"><option value="bank_transfer">Bank transfer</option><% if (stripe) { %><option value="card">Card (secure payment page)</option><% } %></select></div>
+      <button type="submit">Request top-up</button>
+    </form>
+    <p class="field-hint">Bank transfers: pay to <strong><%= company.bank_account_name %></strong> <%= company.bank_account_number || '(account number shown on your request)' %> quoting the request reference. Funds are credited when Ridgeline confirms receipt.</p>
+  </div>
+  <div class="card"><h2>Automatic top-ups</h2>
+    <% if (consent) { %>
+      <p>Active since <%= date(consent.consented_at) %>: request <strong><%= money(consent.amount_cents) %></strong> when the balance falls below <strong><%= money(consent.trigger_below_cents) %></strong>.</p>
+      <p class="field-hint"><%= consent.consent_text %></p>
+      <% if (actor.customerRole === 'owner') { %><form method="post" action="/app/auto-topup/revoke"><%- include('../partials/csrf') %><button class="secondary" type="submit">Withdraw authority</button></form><% } %>
+    <% } else if (actor.customerRole === 'owner') { %>
+      <form method="post" action="/app/auto-topup" class="stack"><%- include('../partials/csrf') %>
+        <div class="grid-2"><div><label>Top-up amount</label><input name="amount" inputmode="decimal" required></div><div><label>When balance falls below</label><input name="threshold" inputmode="decimal" required value="<%= dollarsInput(position.minimumCents) %>"></div></div>
+        <label class="check"><input type="checkbox" name="consent" required> <span><%= consentText.replace('{amount}', 'the amount above').replace('{threshold}', 'the threshold above') %></span></label>
+        <button type="submit" class="secondary">Authorise automatic top-ups</button>
+      </form>
+    <% } else { %><p class="muted">Only the account owner can authorise automatic top-ups.</p><% } %>
+  </div>
+</div>
+<% } %>
+<% if (commitments.length) { %><div class="card"><h2>Committed to booked jobs</h2><div class="table-wrap"><table><tr><th>Job</th><th class="num">Committed</th></tr>
+<% commitments.forEach(function (c) { %><tr><td><a href="/app/jobs/<%= c.job_id %>"><%= c.ref %></a> <%= c.title %></td><td class="num"><%= money(c.amount_cents) %></td></tr><% }) %></table></div>
+<p class="field-hint">Estimated charges are reserved from your available balance until the job is invoiced. They are not deducted until then.</p></div><% } %>
+<div class="card"><h2>Transactions</h2><div class="table-wrap"><table><tr><th>Date</th><th>Description</th><th>Type</th><th class="num">Amount</th><th class="num">Balance</th></tr>
+<% txns.forEach(function (t) { %><tr><td><%= date(t.created_at) %></td><td><%= t.description %></td><td><%= humanize(t.txn_type) %></td><td class="num"><%= money(t.amount_cents) %></td><td class="num"><%= money(t.balance_after_cents) %></td></tr><% }) %>
+<% if (!txns.length) { %><tr><td colspan="5" class="muted">No transactions yet.</td></tr><% } %></table></div></div>
+<div class="card"><h2>Payments</h2><div class="table-wrap"><table><tr><th>Reference</th><th>Requested</th><th>For</th><th>Method</th><th class="num">Amount</th><th>Status</th></tr>
+<% payments.forEach(function (p) { %><tr><td class="mono"><%= p.reference %></td><td><%= date(p.created_at) %></td><td><%= humanize(p.purpose) %></td><td><%= humanize(p.method) %></td><td class="num"><%= money(p.amount_cents) %></td><td><%- include('../partials/status', { s: p.status }) %><% if (p.failure_reason) { %><br><small><%= p.failure_reason %></small><% } %></td></tr><% }) %>
+</table></div></div>
+<div class="card"><h2>Refunds</h2>
+<% refunds.forEach(function (r) { %><p><%= date(r.created_at) %>: <%= money(r.amount_cents) %> – <%= r.reason %> <%- include('../partials/status', { s: r.status }) %></p><% }) %>
+<% if (actor.customerRole === 'owner') { %>
+<form method="post" action="/app/refunds" class="inline-form" data-confirm="Request this refund from your prepaid balance?"><%- include('../partials/csrf') %>
+  <input name="amount" inputmode="decimal" placeholder="Amount" required><input name="reason" placeholder="Reason" required><button type="submit" class="secondary">Request refund</button></form>
+<p class="field-hint">Refunds are limited to your available (uncommitted) balance and are subject to your service agreement.</p><% } %>
+</div>
+<%- include('../partials/foot') %>

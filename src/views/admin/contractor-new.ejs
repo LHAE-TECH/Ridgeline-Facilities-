@@ -1,0 +1,18 @@
+<%- include('../partials/head', { title: 'Add contractor' }) %>
+<h1>Add contractor</h1>
+<form method="post" action="/admin/contractors" class="card stack"><%- include('../partials/csrf') %>
+  <div class="grid-2">
+    <div><label>Legal name</label><input name="legal_name" required></div><div><label>Trading name</label><input name="trading_name"></div>
+    <div><label>NZBN</label><input name="nzbn"></div><div><label>Address</label><input name="address"></div>
+    <div><label>Contact name</label><input name="contact_name" required></div><div><label>Phone</label><input name="phone"></div>
+    <div><label>Email (login)</label><input name="email" type="email" required></div><div><label>Temporary password</label><input name="password" type="password" minlength="10" required></div>
+    <div><label>GST number (if registered)</label><input name="gst_number"></div><div><label class="check"><input type="checkbox" name="gst_registered"> GST registered</label></div>
+    <div><label>Bank account name</label><input name="bank_account_name"></div><div><label>Bank account number</label><input name="bank_account_number"></div>
+    <div><label>Payment terms (days from invoice)</label><input name="payment_terms_days" type="number" value="7"></div><div><label>Max concurrent jobs</label><input name="max_concurrent_jobs" type="number" value="5"></div>
+  </div>
+  <fieldset class="card"><legend>Trades</legend><div class="grid-3"><% trades.forEach(function (t) { %><label class="check"><input type="checkbox" name="trades" value="<%= t.id %>"> <%= t.name %></label><% }) %></div></fieldset>
+  <fieldset class="card"><legend>Regions</legend><div class="grid-3"><% regions.forEach(function (r) { %><label class="check"><input type="checkbox" name="regions" value="<%= r %>"> <%= r %></label><% }) %></div></fieldset>
+  <label class="check"><input type="checkbox" name="after_hours"> After-hours available</label><label class="check"><input type="checkbox" name="emergency"> Emergency available</label>
+  <button type="submit">Create contractor</button>
+</form>
+<%- include('../partials/foot') %>

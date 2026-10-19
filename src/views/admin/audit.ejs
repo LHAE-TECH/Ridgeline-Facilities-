@@ -1,0 +1,5 @@
+<%- include('../partials/head', { title: 'Audit log' }) %>
+<div class="page-head"><h1>Audit log</h1><form class="inline-form" method="get"><input name="entity" value="<%= entity %>" placeholder="Entity type or ID"><button class="secondary" type="submit">Filter</button></form></div>
+<div class="card"><div class="table-wrap"><table><tr><th>When</th><th>Who</th><th>Action</th><th>Entity</th><th>Details</th></tr>
+<% rows.forEach(function (a) { %><tr><td><%= dt(a.occurred_at) %></td><td><%= a.actor_name || a.actor_role %></td><td><%= a.action %></td><td><small><%= a.entity_type %><br><span class="mono"><%= a.entity_id %></span></small></td><td class="mono"><small><%= JSON.stringify(a.details).slice(0, 400) %></small></td></tr><% }) %></table></div></div>
+<%- include('../partials/foot') %>

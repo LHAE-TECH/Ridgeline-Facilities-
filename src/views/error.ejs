@@ -1,0 +1,7 @@
+<%- include('partials/head', { title: 'Error' }) %>
+<div class="card auth-box">
+  <h1><%= status === 404 ? 'Not found' : status === 403 ? 'Access denied' : 'Something went wrong' %></h1>
+  <p><%= message %></p>
+  <a class="btn secondary" href="/">Go to home</a>
+</div>
+<%- include('partials/foot') %>

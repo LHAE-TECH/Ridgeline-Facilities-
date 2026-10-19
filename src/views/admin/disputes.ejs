@@ -1,0 +1,10 @@
+<%- include('../partials/head', { title: 'Disputes' }) %>
+<h1>Disputes</h1>
+<div class="card"><div class="table-wrap"><table><tr><th>Job</th><th>Raised by</th><th>Reason</th><th>Status</th><th>Resolve</th></tr>
+<% disputes.forEach(function (d) { %><tr><td><a href="/admin/jobs/<%= d.job_id %>"><%= d.job_ref %></a><br><small><%= d.customer_name %></small></td><td><%= humanize(d.raised_by_party) %><br><small><%= d.raised_by_name || '' %> · <%= date(d.created_at) %></small></td><td><%= d.reason %><% if (d.resolution) { %><br><small>Resolution: <%= d.resolution %></small><% } %></td><td><%- include('../partials/status', { s: d.status }) %></td>
+<td><% if (['open','investigating'].includes(d.status)) { %>
+<% if (d.status === 'open') { %><form method="post" action="/admin/disputes/<%= d.id %>/investigate" class="inline-form"><%- include('../partials/csrf') %><button class="small secondary" type="submit">Investigating</button></form><% } %>
+<form method="post" action="/admin/disputes/<%= d.id %>/resolve" class="stack"><%- include('../partials/csrf') %><textarea name="resolution" required rows="2" placeholder="Resolution"></textarea>
+<div class="row"><input name="credit" inputmode="decimal" placeholder="Credit ex GST (optional)" class="grow"><select name="outcome"><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select><button class="small" type="submit">Close</button></div></form><% } %></td></tr><% }) %>
+<% if (!disputes.length) { %><tr><td colspan="5" class="muted">No disputes.</td></tr><% } %></table></div></div>
+<%- include('../partials/foot') %>

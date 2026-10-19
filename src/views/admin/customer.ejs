@@ -1,0 +1,71 @@
+<%- include('../partials/head', { title: customer.name }) %>
+<div class="page-head"><div><h1><%= customer.name %></h1><small><%= customer.account_ref %> · <%= customer.billing_email %> · <%- include('../partials/status', { s: customer.status }) %></small></div>
+<a class="btn secondary" href="/admin/customers/<%= customer.id %>/statement.pdf">Statement PDF</a></div>
+<% if (!recon.ok) { %><div class="notice err">Ledger reconciliation mismatch: cached <%= money(recon.cached) %>, sub-ledger <%= money(recon.subledger) %>, GL <%= money(recon.generalLedger) %>. Investigate before further transactions.</div><% } %>
+<div class="stats">
+  <div class="stat"><div class="label">Agreed minimum</div><div class="value"><%= money(position.minimumCents) %></div><div class="sub"><%= customer.custom_arrangement ? 'Custom: ' + (customer.custom_arrangement_notes || '') : 'Standard' %></div></div>
+  <div class="stat <%= position.belowMinimum ? 'alert' : '' %>"><div class="label">Prepaid balance</div><div class="value"><%= money(position.balanceCents) %></div></div>
+  <div class="stat"><div class="label">Committed</div><div class="value"><%= money(position.committedCents) %></div></div>
+  <div class="stat"><div class="label">Available</div><div class="value"><%= money(position.availableCents) %></div></div>
+  <div class="stat"><div class="label">Ledger check</div><div class="value"><%= recon.ok ? 'Balanced' : 'MISMATCH' %></div></div>
+</div>
+<div class="card" id="assessment"><div class="page-head"><h2>Minimum balance assessment</h2>
+  <form method="post" action="/admin/customers/<%= customer.id %>/assessment"><%- include('../partials/csrf') %><button type="submit" class="secondary small">Recalculate</button></form></div>
+<% if (!assessment) { %><p class="muted">No assessment yet.</p><% } else { const b = assessment.breakdown; %>
+  <p>Recommended <strong><%= money(assessment.recommended_cents) %></strong> (calculated <%= money(assessment.calculated_cents) %>) · coverage <%= mult(assessment.coverage_factor_bps) %> · <%- include('../partials/status', { s: assessment.status }) %><% if (assessment.agreed_cents) { %> · agreed <%= money(assessment.agreed_cents) %><% } %></p>
+  <details><summary>Show calculation</summary><ol><% b.steps.forEach(function (s) { %><li><%= s %></li><% }) %></ol>
+  <div class="table-wrap"><table><% b.lines.forEach(function (l) { %><tr><td><%= l.facility %></td><td><small><%= l.explanation %></small></td></tr><% }) %></table></div></details>
+  <% if (assessment.status === 'proposed' && ['admin','finance'].includes(actor.role)) { %>
+  <form method="post" action="/admin/assessments/<%= assessment.id %>/accept" class="stack" style="margin-top:.75rem"><%- include('../partials/csrf') %>
+    <% if (assessment.requires_custom) { %><div class="notice">Exceeds the standard maximum: an administrator must authorise a custom amount and record the reason.</div><% } %>
+    <div class="grid-2"><div><label>Agreed amount <%= assessment.requires_custom ? '(required)' : '(leave blank to accept recommendation)' %></label><input name="agreed" inputmode="decimal"></div>
+    <div><label>Reason / authority (required for custom)</label><input name="notes"></div></div>
+    <button type="submit">Agree minimum balance</button></form>
+  <% } %>
+<% } %></div>
+<div class="grid-2">
+  <div class="card"><h2>Account terms</h2>
+    <form method="post" action="/admin/customers/<%= customer.id %>/terms" class="stack"><%- include('../partials/csrf') %>
+      <div class="grid-2">
+        <div><label>Category</label><select name="customer_category"><% categories.forEach(function (c) { %><option <%= c === customer.customer_category ? 'selected' : '' %>><%= c %></option><% }) %></select></div>
+        <div><label>Service level</label><select name="service_level"><% levels.forEach(function (l) { %><option <%= l === customer.service_level ? 'selected' : '' %>><%= l %></option><% }) %></select></div>
+        <div><label>Emergency cover</label><select name="emergency_cover"><% ['none','business_hours','24x7'].forEach(function (l) { %><option <%= l === customer.emergency_cover ? 'selected' : '' %>><%= l %></option><% }) %></select></div>
+        <div><label>Authority limit (incl GST)</label><input name="authority_limit" value="<%= dollarsInput(customer.authority_limit_cents) %>"></div>
+        <div><label>Payment terms (days)</label><input name="payment_terms_days" type="number" value="<%= customer.payment_terms_days %>"></div>
+        <div><label>Status</label><select name="status"><option value="">(unchanged)</option><option value="active">active</option><option value="suspended">suspended</option><option value="closed">closed</option></select></div>
+      </div>
+      <label class="check"><input type="checkbox" name="po_required" <%= customer.po_required ? 'checked' : '' %>> PO number required</label>
+      <label class="check"><input type="checkbox" name="acknowledgement_required" <%= customer.acknowledgement_required ? 'checked' : '' %>> Site acknowledgement required at completion</label>
+      <label class="check"><input type="checkbox" name="cancellation_fees_apply" <%= customer.cancellation_fees_apply ? 'checked' : '' %>> Late cancellation charges permitted by agreement</label>
+      <label class="check"><input type="checkbox" name="auto_apply_prepaid" <%= customer.auto_apply_prepaid ? 'checked' : '' %>> Apply prepaid credit to invoices automatically</label>
+      <button type="submit">Save terms</button></form></div>
+  <div class="card"><h2>Record bank receipt</h2>
+    <% if (['admin','finance'].includes(actor.role)) { %>
+    <form method="post" action="/admin/customers/<%= customer.id %>/receipts" class="stack"><%- include('../partials/csrf') %><input type="hidden" name="key" value="<%= key %>">
+      <div class="grid-2"><div><label>Amount</label><input name="amount" inputmode="decimal" required></div><div><label>Date received</label><input name="received_date" type="date" required value="<%= new Date().toISOString().slice(0,10) %>"></div>
+      <div><label>Bank reference</label><input name="bank_reference" required></div><div><label>Apply to</label><select name="purpose"><option value="">Prepaid balance</option><option value="invoice">Invoice receivable</option></select></div></div>
+      <div><label>Invoice (if paying an invoice)</label><select name="invoice_id"><option value="">—</option><% invoices.filter(function (i) { return ['issued','partially_paid'].includes(i.status); }).forEach(function (i) { %><option value="<%= i.id %>"><%= i.invoice_number %> (<%= money(outstandingCents(i)) %> due)</option><% }) %></select></div>
+      <button type="submit">Record receipt</button>
+      <p class="field-hint">Only record money that has actually arrived in the bank account.</p></form>
+    <% if (actor.role === 'admin') { %>
+    <h3>Balance adjustment (administrator)</h3>
+    <form method="post" action="/admin/customers/<%= customer.id %>/adjust" class="stack" data-confirm="Post this adjustment to the customer's prepaid balance?"><%- include('../partials/csrf') %><input type="hidden" name="key" value="<%= newKey() %>">
+      <div class="grid-3"><select name="direction"><option value="credit">Credit</option><option value="debit">Debit</option></select><input name="amount" inputmode="decimal" placeholder="Amount" required><input name="reason" placeholder="Reason" required></div>
+      <button type="submit" class="secondary">Post adjustment</button></form><% } %>
+    <% } else { %><p class="muted">Finance role required.</p><% } %>
+  </div>
+</div>
+<div class="card"><h2>Portfolio</h2><div class="table-wrap"><table><tr><th>Site</th><th>Facility</th><th>Type</th><th class="num">Units</th></tr>
+<% facilities.forEach(function (f) { const s = sites.find(function (x) { return x.id === f.site_id; }); %><tr><td><%= s ? s.name : '' %><br><small><%= s ? s.address + ', ' + s.region : '' %></small></td><td><%= f.name %></td><td><%= f.type_name %></td><td class="num"><%= f.unit_count %></td></tr><% }) %></table></div></div>
+<div class="grid-2">
+  <div class="card"><h2>Jobs</h2><div class="table-wrap"><table><% jobs.forEach(function (j) { %><tr><td><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> <%= j.title %></td><td><%- include('../partials/status', { s: j.status }) %></td></tr><% }) %></table></div></div>
+  <div class="card"><h2>Invoices</h2><div class="table-wrap"><table><% invoices.forEach(function (i) { %><tr><td><a href="/admin/customer-invoices/<%= i.id %>"><%= i.invoice_number || 'Draft' %></a></td><td class="num"><%= money(i.total_cents) %></td><td><%- include('../partials/status', { s: i.status }) %></td></tr><% }) %></table></div></div>
+</div>
+<div class="card"><h2>Prepaid transactions</h2><div class="table-wrap"><table><tr><th>Date</th><th>Description</th><th>Type</th><th class="num">Amount</th><th class="num">Balance</th></tr>
+<% txns.forEach(function (t) { %><tr><td><%= dt(t.created_at) %></td><td><%= t.description %></td><td><%= humanize(t.txn_type) %></td><td class="num"><%= money(t.amount_cents) %></td><td class="num"><%= money(t.balance_after_cents) %></td></tr><% }) %></table></div></div>
+<div class="grid-2">
+  <div class="card"><h2>Payments</h2><% payments.forEach(function (p) { %><p class="mono"><%= p.reference %> · <%= humanize(p.method) %> · <%= money(p.amount_cents) %> · <%- include('../partials/status', { s: p.status }) %></p><% }) %></div>
+  <div class="card"><h2>Contacts</h2><% users.forEach(function (u) { %><p><%= u.name %> · <%= u.email %> · <%= u.customer_role %><%= u.is_active ? '' : ' (inactive)' %></p><% }) %>
+  <% if (consent) { %><p class="notice ok">Automatic top-up consent: <%= money(consent.amount_cents) %> below <%= money(consent.trigger_below_cents) %> (since <%= date(consent.consented_at) %>)</p><% } %></div>
+</div>
+<%- include('../partials/foot') %>
