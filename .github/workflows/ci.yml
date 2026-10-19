@@ -1,0 +1,22 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: ridgeline, POSTGRES_PASSWORD: ridgeline, POSTGRES_DB: ridgeline_test }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://ridgeline:ridgeline@localhost:5432/ridgeline_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright-core install chromium
+      - run: npm run typecheck
+      - run: npm run build
+      - run: CHROMIUM_PATH=$(node -e "console.log(require('playwright-core').chromium.executablePath())") npm test

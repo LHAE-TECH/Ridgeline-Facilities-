@@ -170,5 +170,8 @@ describe('criterion 6: completion requires all mandatory evidence', () => {
     expect(await count('SELECT COUNT(*) AS n FROM job_evidence WHERE job_id = $1', [job.id])).toBe(4); // withdrawn item retained
     await expect(db.query('DELETE FROM job_evidence WHERE id = $1', [ev[0].id])).rejects.toThrow(/append-only/);
     await expect(db.query(`UPDATE job_events SET note = 'tampered' WHERE job_id = $1`, [job.id])).rejects.toThrow(/append-only/);
+    await expect(db.query(`UPDATE job_evidence SET file_id = file_id, caption = 'edited' WHERE job_id = $1`, [job.id])).rejects.toThrow(/immutable/);
+    await expect(db.query(`UPDATE completion_reports SET labour_minutes = 1 WHERE job_id = $1`, [job.id])).rejects.toThrow(/immutable/);
+    await expect(db.query(`UPDATE files SET sha256 = 'x' WHERE job_id = $1`, [job.id])).rejects.toThrow(/append-only/);
   });
 });

@@ -1,0 +1,27 @@
+# Local evaluation: `docker compose up --build`, then `docker compose exec app node dist/seed-cli.js --demo`
+# (demo seeding refuses to run with NODE_ENV=production, so this file sets NODE_ENV=development).
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ridgeline
+      POSTGRES_PASSWORD: ridgeline
+      POSTGRES_DB: ridgeline
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "ridgeline"], interval: 5s, retries: 10 }
+  app:
+    build: .
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://ridgeline:ridgeline@db:5432/ridgeline
+      SESSION_SECRET: local-development-only-secret
+      APP_BASE_URL: http://localhost:3000
+      UPLOAD_DIR: /data/uploads
+      SEED_ADMIN_EMAIL: admin@example.com
+      SEED_ADMIN_PASSWORD: change-this-password
+    ports: ["3000:3000"]
+    volumes: [uploads:/data/uploads]
+volumes:
+  pgdata:
+  uploads:
