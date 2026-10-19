@@ -5,6 +5,7 @@ import { isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { formatNzd, parseQuantity } from '../lib/money.js';
 import { audit } from './audit.js';
+import { recordScopeExtension } from './p1Scope.js';
 import { lockJob, recordJobEvent, transitionJob } from './jobState.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
 import { type CostLine, loadApprovedRules, priceCostLines } from './pricing.js';
@@ -318,6 +319,8 @@ export async function customerDecideQuote(db: Db, actor: Actor, quoteId: string,
     if (q.status !== 'sent_to_customer') throw new AppError('This quote is not awaiting your decision', 409);
     await c.query('UPDATE quotes SET status = $2, customer_decision_by = $3, customer_decision_at = now() WHERE id = $1', [quoteId, decision, actor.id]);
     if (decision === 'approved') {
+      // A customer approving a quote or variation on a make-safe job is their approval of work beyond make-safe.
+      await recordScopeExtension(c, actor, job, 'customer_approval', `Customer approved ${q.kind}: ${q.description} (${formatNzd(q.customer_total_cents)})`);
       if (q.kind === 'quote') {
         await c.query('UPDATE jobs SET authorised_contractor_cost_cents = GREATEST(COALESCE(authorised_contractor_cost_cents,0), $2) WHERE id = $1', [job.id, q.contractor_cost_cents]);
       } else {

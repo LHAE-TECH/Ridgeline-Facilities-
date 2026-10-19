@@ -73,7 +73,7 @@ export async function newCustomer(opts: { category?: string; facilities?: { type
 }
 
 /** Customer with an agreed minimum and a confirmed deposit, ready to book. */
-export async function activeCustomer(opts: { deposit?: number; facilities?: { type: string; units: number }[]; region?: string } = {}): Promise<CustomerFixture & { admin: Actor; finance: Actor }> {
+export async function activeCustomer(opts: { deposit?: number; facilities?: { type: string; units: number }[]; region?: string; suburb?: string } = {}): Promise<CustomerFixture & { admin: Actor; finance: Actor }> {
   const fx = await newCustomer(opts);
   const admin = await staff('admin');
   const finance = await staff('finance');

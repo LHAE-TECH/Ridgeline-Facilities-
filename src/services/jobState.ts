@@ -75,7 +75,7 @@ export async function transitionJob(db: Db, actor: Actor, job: { id: string; sta
   const sets = ['status = $2', 'updated_at = now()'];
   const params: unknown[] = [job.id, to];
   for (const [col, v] of Object.entries(opts.set ?? {})) {
-    if (!/^[a-z_]+$/.test(col)) throw new Error('Invalid column');
+    if (!/^[a-z][a-z0-9_]*$/.test(col)) throw new Error('Invalid column');
     if ('sql' in v) sets.push(`${col} = ${v.sql}`);
     else { params.push(v.value); sets.push(`${col} = $${params.length}`); }
   }

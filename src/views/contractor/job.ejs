@@ -1,5 +1,6 @@
 <%- include('../partials/head', { title: job.ref }) %>
 <div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><%= job.trade_name %> · <strong><%= prio(job.priority) %></strong></small></div><div><%- include('../partials/status', { s: job.status }) %></div></div>
+<% if (job.p1_scope === 'make_safe' && !job.scope_extended_at) { %><div class="notice err"><strong>MAKE-SAFE ONLY.</strong> Make the site safe and record it. Do not carry out further work until Ridgeline confirms approval (you will be notified). Authorised cost: <%= money(job.authorised_contractor_cost_cents) %> ex GST.</div><% } %>
 <% if (offer) { %>
   <div class="notice">Offered to you until <%= dt(offer.expires_at) %>.
     <form method="post" action="/c/offers/<%= offer.id %>/accept" class="inline-form"><%- include('../partials/csrf') %><button type="submit">Accept job</button></form></div>

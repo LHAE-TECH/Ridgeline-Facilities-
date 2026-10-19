@@ -24,6 +24,16 @@
   <div class="stat <%= d.disputes ? 'alert' : '' %>"><div class="label">Open disputes</div><div class="value"><a href="/admin/disputes"><%= d.disputes %></a></div></div>
 </div>
 
+<h2>Unfunded emergency exposure</h2>
+<div class="stats">
+  <div class="stat <%= d.unfundedP1.totalCents ? 'alert' : '' %>"><div class="label">Total unfunded P1 exposure</div><div class="value"><%= money(d.unfundedP1.totalCents) %></div>
+    <div class="sub"><%= money(d.unfundedP1.openUnfundedCents) %> on <%= d.unfundedP1.openJobs %> open job(s) · <%= money(d.unfundedP1.invoicedUnpaidCents) %> invoiced, unpaid</div></div>
+  <div class="stat <%= d.unfundedP1.suspendedCustomers ? 'alert' : '' %>"><div class="label">Customers with unfunded P1 dispatch suspended</div><div class="value"><%= d.unfundedP1.suspendedCustomers %></div></div>
+</div>
+<% if (d.unfundedP1.customers.length) { %><div class="card"><div class="table-wrap"><table><tr><th>Customer</th><th class="num">Open unfunded</th><th class="num">Invoiced unpaid (P1)</th><th class="num">Unfunded balance / threshold</th></tr>
+<% d.unfundedP1.customers.forEach(function (c) { %><tr><td><a href="/admin/customers/<%= c.id %>"><%= c.name %></a></td><td class="num"><%= money(c.openUnfundedCents) %></td><td class="num"><%= money(c.invoicedUnpaidCents) %></td>
+<td class="num"><%= money(c.unfundedBalanceCents) %> / <%= money(c.thresholdCents) %><% if (c.suspended) { %> <span class="badge err">suspended</span><% } %></td></tr><% }) %></table></div></div><% } %>
+
 <h2>SLA performance (clock started in period)</h2>
 <div class="card"><div class="table-wrap"><table><tr><th>Priority</th><th class="num">Jobs</th><th class="num">On site in target</th><th class="num">Resolved / made safe in target</th><th class="num">Avg time to site</th></tr>
 <% d.sla.forEach(function (r) { %><tr><td><%= r.code %> <%= r.label %></td><td class="num"><%= r.jobs %></td>
@@ -66,7 +76,12 @@
 </div>
 <div class="grid-2">
   <div class="card"><h2>Low-balance accounts</h2><% d.lowBalance.forEach(function (c) { %><p><a href="/admin/customers/<%= c.id %>"><%= c.name %></a> · <%= money(c.prepaid_balance_cents) %> of <%= money(c.agreed_minimum_balance_cents) %></p><% }) %><% if (!d.lowBalance.length) { %><p class="muted">None</p><% } %></div>
-  <div class="card"><h2>SLA at risk or breached</h2><% d.overdue.forEach(function (j) { %><p><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> · <%= prio(j.priority) %> · <%= statusLabel(j.status) %> · <span class="badge <%= j.current.state === 'breached' ? 'err' : 'warn' %>"><%= slaBadge(j.current) %></span></p><% }) %><% if (!d.overdue.length) { %><p class="muted">None</p><% } %></div>
+  <div class="card"><h2>Area unconfirmed</h2>
+    <p class="field-hint">Not counted in SLA performance until the site's area is confirmed.</p>
+    <% d.areaUnconfirmed.sites.forEach(function (s) { %><p><a href="/admin/customers/<%= s.customer_id %>"><%= s.customer_name %></a> · <%= s.name %>, <%= s.suburb || 'no suburb' %> <span class="badge warn">confirm area</span></p><% }) %>
+    <% d.areaUnconfirmed.jobs.forEach(function (j) { %><p><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> · <%= prio(j.priority) %> · <%= j.site_name %> (<%= j.suburb || '—' %>)</p><% }) %>
+    <% if (!d.areaUnconfirmed.sites.length && !d.areaUnconfirmed.jobs.length) { %><p class="muted">None</p><% } %></div>
+  <div class="card"><h2>SLA at risk or breached</h2><% d.overdue.forEach(function (j) { %><p><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> · <%= prio(j.priority) %> · <%= statusLabel(j.status) %> · <span class="badge <%= j.current.state === 'breached' ? 'err' : 'warn' %>"><%= slaBadge(j.current) %></span><%= j.area_confirmed ? '' : ' (area unconfirmed, provisional)' %></p><% }) %><% if (!d.overdue.length) { %><p class="muted">None</p><% } %></div>
   <div class="card"><h2>Compliance expiring (30 days)</h2><% d.compliance.forEach(function (c) { %><p><a href="/admin/contractors/<%= c.contractor_id %>"><%= c.legal_name %></a> · <%= humanize(c.doc_type) %> · <%= date(c.expires_at) %></p><% }) %><% if (!d.compliance.length) { %><p class="muted">None</p><% } %></div>
   <div class="card"><h2>Failures needing attention</h2><dl class="kv">
     <dt>Failed / reversed customer payments (30 d)</dt><dd><%= d.failures.failed_payments %></dd><dt>Pending customer payments</dt><dd><a href="/admin/payments"><%= d.failures.pending_payments %></a></dd>

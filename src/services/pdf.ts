@@ -255,8 +255,11 @@ export async function monthlyReportPdf(db: Db, customerId: string, month: string
   const to = end.toISOString().slice(0, 10);
   const c = await one(db, 'SELECT * FROM customers WHERE id = $1', [customerId]);
   const sla = await slaPerformance(db, { from, to }, customerId);
+  const { areaUnconfirmedJobs } = await import('./sla.js');
+  const unconfirmed = await areaUnconfirmedJobs(db, { from, to }, customerId);
   const jobs = await query(db,
     `SELECT j.ref, j.title, j.priority, j.status, j.sla_onsite_met, j.sla_resolve_met, j.created_at, j.released_at, s.name AS site_name,
+            COALESCE((j.sla_targets->>'area_confirmed')::boolean, true) AS area_confirmed,
             (SELECT total_cents FROM customer_invoices ci WHERE ci.job_id = j.id AND ci.status NOT IN ('draft','void')) AS invoiced
        FROM jobs j JOIN sites s ON s.id = j.site_id
       WHERE j.customer_id = $1 AND (j.created_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $2 AND $3 ORDER BY j.created_at`, [customerId, from, to]);
@@ -287,8 +290,14 @@ export async function monthlyReportPdf(db: Db, customerId: string, month: string
     table(doc, [{ label: 'Job', width: 70 }, { label: 'Site / description', width: 125 }, { label: 'Priority', width: 55 }, { label: 'Booked', width: 70 },
       { label: 'Released', width: 70 }, { label: 'SLA', width: 45 }, { label: 'Invoiced', width: 65, align: 'right' }],
       jobs.map((j) => [j.ref, `${j.site_name}: ${j.title}`, priorityLabel(j.priority), fmtDateTime(j.created_at), j.released_at ? fmtDateTime(j.released_at) : 'Not released',
-        j.sla_onsite_met === null ? (j.status === 'cancelled' ? 'Cancelled' : 'Open') : j.sla_onsite_met && j.sla_resolve_met !== false ? 'Met' : 'Missed',
+        !j.area_confirmed ? 'Not measured' : j.sla_onsite_met === null ? (j.status === 'cancelled' ? 'Cancelled' : 'Open') : j.sla_onsite_met && j.sla_resolve_met !== false ? 'Met' : 'Missed',
         j.invoiced ? formatNzd(j.invoiced) : '—']));
+    if (unconfirmed.length) {
+      doc.moveDown().font('Helvetica-Bold').text(`Not measured: service area being confirmed (${unconfirmed.length})`);
+      doc.font('Helvetica').fontSize(8).fillColor('#555').text('These jobs are at a site whose service area is still being confirmed. They are excluded from the service-level figures above.').fillColor('#000').fontSize(10);
+      table(doc, [{ label: 'Job', width: 80 }, { label: 'Site / description', width: 250 }, { label: 'Priority', width: 80 }, { label: 'Booked', width: 90 }],
+        unconfirmed.map((j) => [j.ref, `${j.site_name}: ${j.title}`, priorityLabel(j.priority), fmtDateTime(j.created_at)]));
+    }
     footer(doc, s.company);
   });
 }

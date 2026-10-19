@@ -133,6 +133,52 @@ export function areaForSite(site: { suburb?: string | null; city?: string | null
   return { area: null, source: 'unconfirmed', metro: true };
 }
 
+/**
+ * Re-resolves a site's SLA area and caches it on the site. When a site's area becomes confirmed, the SLA targets of
+ * its jobs that were set while it was unconfirmed are recalculated for the real area (and those jobs then count in
+ * SLA reporting).
+ */
+export async function refreshSiteArea(db: Db, siteId: string, settings?: Settings): Promise<SiteArea> {
+  const s = settings ?? await getSettings(db);
+  const site = await one(db, 'SELECT id, suburb, city, sla_area_override, sla_area_source FROM sites WHERE id = $1', [siteId]);
+  const area = areaForSite(site, s.sla_areas);
+  await db.query('UPDATE sites SET sla_area = $2, sla_area_source = $3 WHERE id = $1', [siteId, area.area?.name ?? null, area.source]);
+  if (area.source !== 'unconfirmed') {
+    const pending = await query(db,
+      `SELECT * FROM jobs WHERE site_id = $1 AND status <> 'cancelled' AND sla_started_at IS NOT NULL
+          AND (sla_targets->>'area_confirmed')::boolean IS FALSE`, [siteId]);
+    for (const job of pending) {
+      await startSlaClock(db, job);
+      await evaluateSla(db, job.id);
+      await recordJobEvent(db, SYSTEM_ACTOR, job.id, 'sla.area_confirmed', { note: `SLA area confirmed as ${area.area!.name}; targets recalculated` });
+    }
+  }
+  return area;
+}
+
+export async function refreshAllSiteAreas(db: Db): Promise<number> {
+  const settings = await getSettings(db);
+  const sites = await query<{ id: string }>(db, 'SELECT id FROM sites');
+  for (const s of sites) await refreshSiteArea(db, s.id, settings);
+  return sites.length;
+}
+
+/** Active sites whose suburb is in no SLA area and that staff have not pinned. */
+export async function unconfirmedSites(db: Db) {
+  return query(db, `SELECT s.id, s.name, s.address, s.suburb, s.city, s.customer_id, c.name AS customer_name
+    FROM sites s JOIN customers c ON c.id = s.customer_id WHERE s.is_active AND s.sla_area_source = 'unconfirmed' ORDER BY s.created_at`);
+}
+
+/** Jobs excluded from SLA performance because their site's area was unconfirmed when the targets were set. */
+export async function areaUnconfirmedJobs(db: Db, period: { from: string; to: string }, customerId?: string) {
+  return query(db,
+    `SELECT j.id, j.ref, j.title, j.priority, j.status, j.created_at, j.released_at, j.sla_onsite_met, j.sla_resolve_met, s.name AS site_name, s.suburb
+       FROM jobs j JOIN sites s ON s.id = j.site_id
+      WHERE j.sla_started_at IS NOT NULL AND j.status <> 'cancelled' AND (j.sla_targets->>'area_confirmed')::boolean IS FALSE
+        AND (j.sla_started_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $1::date AND $2::date
+        AND ($3::uuid IS NULL OR j.customer_id = $3) ORDER BY j.created_at`, [period.from, period.to, customerId ?? null]);
+}
+
 export async function siteArea(db: Db, siteId: string): Promise<SiteArea> {
   const site = await one(db, 'SELECT suburb, city, sla_area_override FROM sites WHERE id = $1', [siteId]);
   return areaForSite(site, (await getSettings(db)).sla_areas);
@@ -298,6 +344,8 @@ export async function slaPerformance(db: Db, period: { from: string; to: string 
             ROUND(AVG(EXTRACT(EPOCH FROM (released_at - created_at)) / 60) FILTER (WHERE released_at IS NOT NULL))::int AS avg_hold_minutes
        FROM jobs
       WHERE sla_started_at IS NOT NULL AND status <> 'cancelled'
+        -- Targets set while the site's area was unconfirmed were never agreed: excluded until the area is confirmed.
+        AND COALESCE((sla_targets->>'area_confirmed')::boolean, true)
         AND (sla_started_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $1::date AND $2::date
         AND ($3::uuid IS NULL OR customer_id = $3)
       GROUP BY priority`, [period.from, period.to, customerId ?? null]);
@@ -319,7 +367,7 @@ export async function openSlaJobs(db: Db) {
   const settings = await getSettings(db);
   const jobs = await query(db,
     `SELECT j.id, j.ref, j.title, j.priority, j.status, j.sla_started_at, j.sla_onsite_due, j.sla_resolve_due, j.arrived_at, j.made_safe_at, j.completed_at,
-            c.name AS customer_name
+            c.name AS customer_name, COALESCE((j.sla_targets->>'area_confirmed')::boolean, true) AS area_confirmed
        FROM jobs j JOIN customers c ON c.id = j.customer_id
       WHERE j.sla_started_at IS NOT NULL AND j.status IN ('dispatch','offered','assigned','on_site','in_progress')`);
   return jobs.map((j) => {

@@ -9,6 +9,7 @@ import { contractorProfile, createContractor, DOCUMENT_TYPES, reviewComplianceDo
 import { applyPrepaidToInvoice, createCreditNote, getCustomerInvoiceForActor, issueCustomerInvoice, outstandingCents, recalculateDraft } from '../services/customerInvoices.js';
 import { CUSTOMER_CATEGORIES, hashPassword, NZ_REGIONS, portfolio, SERVICE_LEVELS, setSiteArea, updateCustomerTerms } from '../services/customers.js';
 import { assessContractorsForJob, dispatchJob, manualAssign, rankForSla, unassign } from '../services/dispatch.js';
+import { extendP1Scope, unfundedPosition } from '../services/p1Scope.js';
 import { areaForSite, PRIORITY_META, slaLegState, TRIAGE_QUESTIONS } from '../services/sla.js';
 import { raiseDispute, resolveDispute, setDisputeInvestigating } from '../services/disputes.js';
 import { reviewEvidence, reviewQuote, withdrawEvidence } from '../services/evidence.js';
@@ -73,9 +74,11 @@ adminRouter.get('/customers/:id', async (req, res) => {
     maybeOne(pool, `SELECT * FROM auto_topup_consents WHERE customer_id = $1 AND revoked_at IS NULL`, [customer.id]),
   ]);
   const card = await maybeOne(pool, `SELECT * FROM customer_payment_methods WHERE customer_id = $1 AND status = 'active'`, [customer.id]);
-  const slaAreas = (await getSettings(pool)).sla_areas;
+  const settings = await getSettings(pool);
+  const slaAreas = settings.sla_areas;
   const siteAreas = Object.fromEntries(data.sites.map((s: any) => [s.id, areaForSite(s, slaAreas)]));
-  res.render('admin/customer', { customer, ...data, siteAreas, slaAreas, position, assessment, txns, payments, jobs, users, invoices, recon, refunds, consent, card,
+  const unfunded = await unfundedPosition(pool, customer.id, settings);
+  res.render('admin/customer', { customer, ...data, siteAreas, slaAreas, unfunded, settingsDefaults: settings, position, assessment, txns, payments, jobs, users, invoices, recon, refunds, consent, card,
     categories: CUSTOMER_CATEGORIES, levels: SERVICE_LEVELS, key: newKey(), outstandingCents });
 });
 
@@ -86,6 +89,10 @@ adminRouter.post('/customers/:id/terms', action(async (req) => {
     poRequired: bool(req.body.po_required), acknowledgementRequired: bool(req.body.acknowledgement_required), cancellationFeesApply: bool(req.body.cancellation_fees_apply),
     autoApplyPrepaid: bool(req.body.auto_apply_prepaid), status: (optStr(req.body.status) as any) ?? undefined,
     monthlyReportEnabled: actor(req).role === 'admin' ? bool(req.body.monthly_report_enabled) : undefined,
+    ...(['admin', 'finance'].includes(actor(req).role) ? {
+      p1CapExGstCents: optDollars(req.body.p1_cap, 'Make-safe cap') ?? null,
+      p1SuspendThresholdCents: optDollars(req.body.p1_threshold, 'Unfunded threshold') ?? null,
+    } : {}),
   });
   return { redirect: `/admin/customers/${pid(req)}`, message: 'Account terms updated' };
 }));
@@ -186,6 +193,10 @@ adminRouter.post('/jobs/:id/dispatch', action(async (req) => {
 adminRouter.post('/jobs/:id/priority', action(async (req) => {
   await reclassifyJob(pool, actor(req), pid(req), str(req.body.priority) as any, str(req.body.reason));
   return { redirect: `/admin/jobs/${pid(req)}`, message: 'Priority reclassified and SLA targets recalculated' };
+}));
+adminRouter.post('/jobs/:id/scope', action(async (req) => {
+  await extendP1Scope(pool, actor(req), pid(req), str(req.body.reason));
+  return { redirect: `/admin/jobs/${pid(req)}`, message: 'Make-safe scope overridden; reason recorded' };
 }));
 adminRouter.post('/sites/:id/area', action(async (req) => {
   const site = await setSiteArea(pool, actor(req), pid(req), optStr(req.body.area) ?? null);

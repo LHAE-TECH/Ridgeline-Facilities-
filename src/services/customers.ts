@@ -6,6 +6,8 @@ import { isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { audit } from './audit.js';
 import { getSettings } from './settings.js';
+import { link, notifyStaff } from './notifications.js';
+import { refreshSiteArea } from './sla.js';
 import { CUSTOMER_TERMS_VERSION } from './terms.js';
 
 export const CUSTOMER_CATEGORIES = ['residential', 'commercial', 'body_corporate', 'retail', 'industrial', 'mixed', 'custom'];
@@ -99,6 +101,14 @@ export async function addSite(db: Db, actor: Actor, customerId: string, input: S
     [customerId, input.name.trim(), input.address.trim(), input.suburb || null, input.city || null, input.region, input.postcode || null,
      input.lat ?? null, input.lng ?? null, input.accessNotes || null, input.hazards || null, override]);
   await db.query('UPDATE customers SET region = COALESCE(region, $2) WHERE id = $1', [customerId, input.region]);
+  const area = await refreshSiteArea(db, site.id);
+  if (area.source === 'unconfirmed') {
+    await notifyStaff(db, ['ops', 'admin'], {
+      template: 'site_area_unconfirmed', subject: `Confirm SLA area: ${site.name} (${site.suburb})`,
+      body: `New site ${site.address}, ${site.suburb} is not in any SLA area. Jobs (other than emergencies) cannot be booked there until staff pin it to an area or add the suburb to Settings → sla_areas.\n${link(`/admin/customers/${customerId}`)}`,
+      idempotencyKey: `site-area-unconfirmed:${site.id}`,
+    });
+  }
   await audit(db, actor, { action: 'site.created', entityType: 'site', entityId: site.id, customerId });
   return site;
 }
@@ -119,6 +129,8 @@ export async function setSiteArea(db: Db, actor: Actor, siteId: string, areaName
   const value = areaName?.trim() ? await validArea(db, areaName) : null;
   const site = await maybeOne(db, 'UPDATE sites SET sla_area_override = $2 WHERE id = $1 RETURNING *', [siteId, value]);
   if (!site) throw new NotFoundError('Site');
+  const area = await refreshSiteArea(db, siteId);
+  Object.assign(site, { sla_area: area.area?.name ?? null, sla_area_source: area.source });
   await audit(db, actor, { action: 'site.sla_area_set', entityType: 'site', entityId: siteId, customerId: site.customer_id, details: { area: value } });
   return site;
 }
@@ -188,6 +200,9 @@ export interface CustomerTermsInput {
   paymentTermsDays?: number;
   poRequired?: boolean;
   monthlyReportEnabled?: boolean;
+  /** undefined = unchanged, null = use the global setting. */
+  p1CapExGstCents?: number | null;
+  p1SuspendThresholdCents?: number | null;
   acknowledgementRequired?: boolean;
   cancellationFeesApply?: boolean;
   autoApplyPrepaid?: boolean;
@@ -202,6 +217,9 @@ export async function updateCustomerTerms(db: Db, actor: Actor, customerId: stri
     if (input.monthlyReportEnabled !== undefined && input.monthlyReportEnabled !== before.monthly_report_enabled && actor.role !== 'admin') {
       throw new ForbiddenError('Only an administrator can turn the monthly report on or off');
     }
+    if ((input.p1CapExGstCents !== undefined || input.p1SuspendThresholdCents !== undefined) && !['admin', 'finance'].includes(actor.role)) {
+      throw new ForbiddenError('Only finance or an administrator can change unfunded emergency limits');
+    }
     if (input.status === 'active' && before.agreed_minimum_balance_cents === null) {
       throw new AppError('Agree a minimum balance before activating the account');
     }
@@ -212,11 +230,14 @@ export async function updateCustomerTerms(db: Db, actor: Actor, customerId: stri
          payment_terms_days = COALESCE($6, payment_terms_days), po_required = COALESCE($7, po_required),
          acknowledgement_required = COALESCE($8, acknowledgement_required), cancellation_fees_apply = COALESCE($9, cancellation_fees_apply),
          auto_apply_prepaid = COALESCE($10, auto_apply_prepaid), status = COALESCE($11, status),
-         monthly_report_enabled = COALESCE($12, monthly_report_enabled), updated_at = now()
+         monthly_report_enabled = COALESCE($12, monthly_report_enabled),
+         p1_unfunded_cap_ex_gst_cents = CASE WHEN $13 THEN $14::bigint ELSE p1_unfunded_cap_ex_gst_cents END,
+         p1_unfunded_suspend_threshold_cents = CASE WHEN $15 THEN $16::bigint ELSE p1_unfunded_suspend_threshold_cents END, updated_at = now()
        WHERE id = $1 RETURNING *`,
       [customerId, input.customerCategory ?? null, input.serviceLevel ?? null, input.emergencyCover ?? null, input.authorityLimitCents ?? null,
        input.paymentTermsDays ?? null, input.poRequired ?? null, input.acknowledgementRequired ?? null, input.cancellationFeesApply ?? null,
-       input.autoApplyPrepaid ?? null, input.status ?? null, input.monthlyReportEnabled ?? null]);
+       input.autoApplyPrepaid ?? null, input.status ?? null, input.monthlyReportEnabled ?? null,
+       input.p1CapExGstCents !== undefined, input.p1CapExGstCents ?? null, input.p1SuspendThresholdCents !== undefined, input.p1SuspendThresholdCents ?? null]);
     const changed: Record<string, unknown> = {};
     for (const k of Object.keys(after)) if (JSON.stringify(after[k]) !== JSON.stringify(before[k]) && k !== 'updated_at') changed[k] = { from: before[k], to: after[k] };
     await audit(c, actor, { action: 'customer.terms_updated', entityType: 'customer', entityId: customerId, customerId, details: changed });

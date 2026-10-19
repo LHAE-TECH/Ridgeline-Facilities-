@@ -4,6 +4,7 @@ import type { Actor } from '../lib/actor.js';
 import { SYSTEM_ACTOR, isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { audit } from './audit.js';
+import { isMakeSafeOnly } from './p1Scope.js';
 import { DOCUMENT_TYPES } from './contractors.js';
 import { lockJob, recordJobEvent, transitionJob } from './jobState.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff, smsContractor } from './notifications.js';
@@ -152,13 +153,14 @@ export async function dispatchJob(db: Db, actor: Actor, jobId: string): Promise<
         template: 'job_offer', subject: `New ${label} job offer ${job.ref}`,
         body: `A new ${label} job is available in ${where}: ${job.title}.\n` +
           (job.sla_onsite_due ? `SLA: on site by ${fmtNz(job.sla_onsite_due)}.\n` : '') +
+          (isMakeSafeOnly(job) ? 'MAKE-SAFE ONLY: make the site safe; do not carry out further work without Ridgeline approval.\n' : '') +
           `This offer expires in ${minutes} minutes.\nView and accept: ${link(`/c/jobs/${jobId}`)}`,
         idempotencyKey: `offer:${offer.id}`, relatedType: 'job', relatedId: jobId,
       });
       if (sms) {
         await smsContractor(c, a.contractorId, {
           template: 'job_offer_sms',
-          body: `Ridgeline ${label.toUpperCase()} ${job.ref} ${where}: ${job.title}.${job.sla_onsite_due ? ` On site by ${fmtNz(job.sla_onsite_due)}.` : ''} Accept within ${minutes} min: ${link(`/c/jobs/${jobId}`)}`,
+          body: `Ridgeline ${label.toUpperCase()} ${job.ref} ${where}: ${job.title}.${job.sla_onsite_due ? ` On site by ${fmtNz(job.sla_onsite_due)}.` : ''}${isMakeSafeOnly(job) ? ' MAKE-SAFE ONLY.' : ''} Accept within ${minutes} min: ${link(`/c/jobs/${jobId}`)}`,
           idempotencyKey: `offer-sms:${offer.id}`, relatedType: 'job', relatedId: jobId,
         });
       }
@@ -267,7 +269,7 @@ async function finaliseAssignment(c: Db, actor: Actor, job: any, contractorId: s
   await smsContractor(c, contractorId, {
     template: 'job_confirmed_sms',
     body: `Confirmed: you have ${job.ref} (${priorityLabel(job.priority)}) at ${[site.address, site.suburb, site.city].filter(Boolean).join(', ')}.` +
-      `${job.sla_onsite_due ? ` On site by ${fmtNz(job.sla_onsite_due)}.` : ''} ${link(`/c/jobs/${job.id}`)}`,
+      `${job.sla_onsite_due ? ` On site by ${fmtNz(job.sla_onsite_due)}.` : ''}${isMakeSafeOnly(job) ? ' MAKE-SAFE ONLY: no further work without Ridgeline approval.' : ''} ${link(`/c/jobs/${job.id}`)}`,
     idempotencyKey: `confirmed-sms:${job.id}:${contractorId}:${Date.now()}`, relatedType: 'job', relatedId: job.id,
   });
   await notifyCustomer(c, job.customer_id, {

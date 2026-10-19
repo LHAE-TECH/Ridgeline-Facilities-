@@ -101,6 +101,15 @@ export const SETTING_DEFAULTS = {
   // Monthly customer report (emailed on the 1st for the previous month)
   // Master switch (off at launch). Reports are only emailed to customers who are also individually switched on.
   monthly_report_enabled: false,
+  // Unfunded or over-authority P1 jobs are dispatched for make-safe scope only, up to this customer price (ex GST).
+  // Customers can have their own cap. Work beyond needs customer approval or a staff override with a reason.
+  p1_unfunded_cap_ex_gst_cents: 150000,
+  // Once a customer's unfunded balance (receivables plus unfunded open P1 jobs) reaches this, P1 jobs that cannot be
+  // funded are no longer dispatched automatically: they wait for a staff funding exception (staff alerted at once).
+  p1_unfunded_suspend_threshold_cents: 300000,
+  // A site whose suburb is in no SLA area needs staff confirmation before booking. P1 is still accepted (nothing
+  // holds an emergency) unless this is switched off; such jobs are excluded from SLA reporting until confirmed.
+  unconfirmed_area_allows_p1: true,
   // Saved-card automatic top-ups
   auto_topup_max_failures: 3,
   always_required_documents: ['public_liability'],
@@ -148,6 +157,9 @@ export const SETTING_DESCRIPTIONS: Partial<Record<SettingKey, string>> = {
   sla_at_risk_bps: 'Alert operations when this share of an SLA window has elapsed (bps)',
   sla_areas: 'Auckland SLA areas: each lists its suburbs and whether it gets the metro P1 target. Sites with an unlisted suburb are treated as metro and flagged',
   monthly_report_enabled: 'Master switch for emailing monthly customer reports (each customer must also be switched on)',
+  p1_unfunded_cap_ex_gst_cents: 'Make-safe cap (customer price, cents ex GST) for P1 jobs dispatched without funds or above the authority limit; per-customer override on the customer page',
+  p1_unfunded_suspend_threshold_cents: 'Unfunded balance (cents incl GST: receivables plus unfunded open P1 jobs) at which automatic unfunded P1 dispatch stops for a customer; per-customer override',
+  unconfirmed_area_allows_p1: 'Accept P1 bookings at a site whose SLA area is not yet confirmed (other priorities wait for staff confirmation)',
   dispatch_wave_size: 'Contractors offered per dispatch wave, best SLA fit first (0 = all who can meet the SLA)',
   dispatch_wave_minutes: 'Minutes before the next dispatch wave is offered if nobody has accepted',
   escalation_minutes: 'Escalate to staff (SMS + email) if no contractor accepts within this many minutes',
@@ -201,4 +213,9 @@ export async function updateSetting(db: Db, actor: Actor, key: SettingKey, value
     [key, JSON.stringify(value), SETTING_DESCRIPTIONS[key] ?? null, actor.id],
   );
   await audit(db, actor, { action: 'setting.updated', entityType: 'setting', entityId: key, details: { before, after: value } });
+  if (key === 'sla_areas') {
+    // Moving a suburb changes which sites are confirmed and their targets; loaded lazily to avoid a module cycle.
+    const { refreshAllSiteAreas } = await import('./sla.js');
+    await refreshAllSiteAreas(db);
+  }
 }

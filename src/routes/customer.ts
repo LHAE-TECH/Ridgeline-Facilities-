@@ -12,8 +12,9 @@ import { accountPosition } from '../services/ledger.js';
 import { AUTO_TOPUP_CONSENT_TEXT, grantAutoTopUpConsent, requestPayment, requestRefund, revokeAutoTopUpConsent } from '../services/payments.js';
 import { completionReportPdf, customerInvoicePdf, monthlyReportPdf, statementPdf } from '../services/pdf.js';
 import { monthlyReportsEnabledFor } from '../services/monthlyReport.js';
+import { extendP1Scope } from '../services/p1Scope.js';
 import { createCardSetupCheckout, describeCard, removeCard, savedCard } from '../services/autoTopUp.js';
-import { PRIORITY_META, TRIAGE_QUESTIONS, slaPerformance } from '../services/sla.js';
+import { areaUnconfirmedJobs, PRIORITY_META, TRIAGE_QUESTIONS, slaPerformance } from '../services/sla.js';
 import { getSettings } from '../services/settings.js';
 import { createCheckout, stripeEnabled } from '../services/stripe.js';
 import { action, actor, bool, dollars, flash, int, localDateTime, multipart, newKey, optDollars, optStr, requireRole, str, uploadedFiles , pid } from '../web/helpers.js';
@@ -226,6 +227,11 @@ customerRouter.get('/jobs/:id', async (req, res) => {
   res.render('customer/job', { job, events, evidence, report, quotes, invoice, disputes });
 });
 
+customerRouter.post('/jobs/:id/approve-scope', action(async (req) => {
+  await extendP1Scope(pool, actor(req), pid(req), optStr(req.body.note));
+  return { redirect: `/app/jobs/${pid(req)}`, message: 'Further work approved and recorded' };
+}));
+
 customerRouter.post('/jobs/:id/approve', action(async (req) => {
   await approveJobAsCustomer(pool, actor(req), pid(req));
   return { redirect: `/app/jobs/${pid(req)}`, message: 'Job approved' };
@@ -293,8 +299,10 @@ customerRouter.get('/reports', async (req, res) => {
   const months = await query<{ m: string }>(pool, `SELECT DISTINCT to_char(created_at AT TIME ZONE 'Pacific/Auckland', 'YYYY-MM') AS m FROM jobs WHERE customer_id = $1 ORDER BY m DESC LIMIT 24`, [cid(req)]);
   const month = /^\d{4}-\d{2}$/.test(str(req.query.month)) ? str(req.query.month) : months[0]?.m ?? new Date().toISOString().slice(0, 7);
   const end = new Date(`${month}-01T00:00:00Z`); end.setUTCMonth(end.getUTCMonth() + 1); end.setUTCDate(0);
-  const sla = await slaPerformance(pool, { from: `${month}-01`, to: end.toISOString().slice(0, 10) }, cid(req));
-  res.render('customer/reports', { months: months.map((x) => x.m), month, sla });
+  const period = { from: `${month}-01`, to: end.toISOString().slice(0, 10) };
+  const sla = await slaPerformance(pool, period, cid(req));
+  const unconfirmed = await areaUnconfirmedJobs(pool, period, cid(req));
+  res.render('customer/reports', { months: months.map((x) => x.m), month, sla, unconfirmed });
 });
 
 customerRouter.get('/reports/:month.pdf', async (req, res) => {

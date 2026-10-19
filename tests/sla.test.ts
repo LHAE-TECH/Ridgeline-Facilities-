@@ -100,7 +100,7 @@ describe('intake classification', () => {
 });
 
 describe('nothing holds a P1', () => {
-  it('dispatches a P1 at once with no funds and above the authority limit, clock from booking, approver told', async () => {
+  it('dispatches a P1 at once with no funds and above the authority limit (make-safe scope), clock from booking, approver told', async () => {
     await approvedContractor();
     const fx = await activeCustomer();
     await db.query('UPDATE customers SET authority_limit_cents = 1000 WHERE id = $1', [fx.customerId]);
@@ -110,8 +110,9 @@ describe('nothing holds a P1', () => {
     const { job } = await book({ ...fx, owner: bookerActor }, { priority: 'emergency', preferredStart: null });
     expect(['dispatch', 'offered']).toContain(job.status);
     expect(new Date(job.sla_started_at).toISOString()).toBe(new Date(job.created_at).toISOString());
-    expect(await count(`SELECT COUNT(*) AS n FROM job_events WHERE job_id = $1 AND event_type = 'approval.retrospective'`, [job.id])).toBe(1);
-    expect(await count(`SELECT COUNT(*) AS n FROM notifications WHERE template = 'job_emergency_over_limit'`)).toBeGreaterThan(0);
+    expect(job).toMatchObject({ p1_scope: 'make_safe', p1_scope_reason: 'unfunded_over_authority' });
+    expect(await count(`SELECT COUNT(*) AS n FROM job_events WHERE job_id = $1 AND event_type = 'p1.make_safe_scope'`, [job.id])).toBe(1);
+    expect(await count(`SELECT COUNT(*) AS n FROM notifications WHERE template = 'p1_make_safe_dispatch'`)).toBeGreaterThan(0);
     expect(await count(`SELECT COUNT(*) AS n FROM notifications WHERE template = 'emergency_underfunded'`)).toBeGreaterThan(0);
   });
 

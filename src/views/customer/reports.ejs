@@ -9,4 +9,8 @@
 <td class="num"><%= r.avgMinutesToSite === null ? '—' : Math.floor(r.avgMinutesToSite / 60) + 'h ' + (r.avgMinutesToSite % 60) + 'm' %></td>
 <td class="num"><%= r.avgMinutesBookedToReleased === null ? '—' : Math.floor(r.avgMinutesBookedToReleased / 60) + 'h ' + (r.avgMinutesBookedToReleased % 60) + 'm' %></td></tr><% }) %></table></div>
 <p class="field-hint">Targets: P1 Emergency on site 2 hrs (metro) and made safe 4 hrs, 24/7; P2 Urgent on site 8 business hrs and resolved 2 business days; P3 Standard on site 48 business hrs and resolved 10 business days; P4 Scheduled on the agreed date. P1 is measured from booking; P2–P4 from release to dispatch. Any gap between booking and release is shown per job in the PDF.</p></div>
+<% if (unconfirmed.length) { %><div class="card"><h2>Not measured: service area being confirmed</h2>
+<p class="field-hint">These jobs are at a site whose service area Ridgeline is still confirming, so they are not included in the figures above.</p>
+<div class="table-wrap"><table><tr><th>Job</th><th>Site</th><th>Priority</th><th>Booked</th></tr>
+<% unconfirmed.forEach(function (j) { %><tr><td><a href="/app/jobs/<%= j.id %>"><%= j.ref %></a> <%= j.title %></td><td><%= j.site_name %></td><td><%= prio(j.priority) %></td><td><%= dt(j.created_at) %></td></tr><% }) %></table></div></div><% } %>
 <%- include('../partials/foot') %>

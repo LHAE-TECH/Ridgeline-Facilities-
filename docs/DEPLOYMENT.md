@@ -68,6 +68,22 @@ To run the worker separately: set `RUN_WORKER_IN_PROCESS=false` on the web proce
 
 Deploy the new image. Migrations in `migrations/` are applied in order at start-up, each in a transaction, under an advisory lock. Take a backup first (see BACKUP.md). Migrations are forward-only; to roll back, restore the backup.
 
+## Go-live gates (BLOCKING)
+
+Do not take real bookings until **every gate below has passed and been recorded** (date, who, evidence). These are not checklist steps that can be deferred; if a gate fails, go-live stops until it passes.
+
+1. **GATE 1: Live Stripe test passes.** `npm run test:live` with `STRIPE_TEST_SECRET_KEY` set: a saved card charged off-session and credited once, the webhook replay credits nothing, a declined card credits nothing (INTEGRATIONS.md).
+2. **GATE 2: Live Twilio test passes.** `npm run test:live` with live `TWILIO_*` credentials and `SMS_TEST_MOBILE`: a real SMS delivered to a real NZ mobile, its delivery receipt recorded, and a failing number recorded as failed (INTEGRATIONS.md).
+3. **GATE 3: Twilio's delivery callback reaches the DEPLOYED site.** The live test can only replay the callback unless it has a public URL, so this is checked on production itself:
+   - book a test P1 at a test site on the deployed app, with a contractor whose mobile is a staff handset;
+   - confirm the SMS arrives on the handset;
+   - confirm **Admin → Notifications** shows that SMS with delivery status **delivered**, set by Twilio's request to `https://<host>/webhooks/sms/twilio` (signature verified with the production auth token);
+   - repeat with an undeliverable number and confirm it shows **failed**.
+
+   If the status stays at `queued`/`sent`, Twilio cannot reach the callback (DNS, TLS, firewall, wrong `APP_BASE_URL`, or a signature mismatch from a proxy rewriting the URL). Escalation SMS failures would then go unnoticed. **Do not go live.**
+
+Credentials for these tests come from the environment only (hosting secrets or CI secrets). They are never written to files, logs, tickets or docs. Use a dedicated Twilio subaccount with a low spend cap for testing, and rotate its credentials afterwards.
+
 ## Go-live checklist
 
 - [ ] Admin → Settings → **Contracting entity & GST**: confirm LHA Holdings Limited / NZBN 9429052390173 and **enter the GST number**. GST invoices are blocked until it is set. Also enter the address and the bank account for customer payments.
@@ -76,9 +92,9 @@ Deploy the new image. Migrations in `migrations/` are applied in order at start-
 - [ ] Review the **pricing rules** (default 35% markup on every category, NZ$135 minimum job charge) and the reference contractor rates used for estimates. Make sure customer agreements disclose them.
 - [ ] Review the **public holidays** list and add regional anniversary days (they affect business-hour SLA clocks).
 - [ ] Confirm the **SLA settings**: `sla_areas` (Auckland metro / Rodney and Franklin suburb lists), P1 non-metro targets (4 h on site / 8 h made safe), `sla_business_hours`, escalation windows, and enter `escalation_staff_phones` (on-call mobiles). Check every customer site shows a confirmed SLA area.
-- [ ] **Live integration tests must pass** (`npm run test:live`; INTEGRATIONS.md): Stripe test mode (`STRIPE_TEST_SECRET_KEY`) and Twilio (`TWILIO_*`, `SMS_TEST_MOBILE`). Outbound HTTPS to `api.stripe.com` and `api.twilio.com` is required.
-- [ ] Configure **Twilio**: the status callback URL `https://<host>/webhooks/sms/twilio` is sent automatically with each message. Then book a test P1 on the deployed site and confirm the SMS arrives and Admin → Notifications shows **delivered** (proves Twilio can reach the callback).
 - [ ] Monthly customer report: leave `monthly_report_enabled` off until Ridgeline decides to switch it on (then enable per customer).
+- [ ] Unfunded emergencies: confirm `p1_unfunded_cap_ex_gst_cents` (default NZ$1,500 ex GST make-safe cap) and `p1_unfunded_suspend_threshold_cents` (default NZ$3,000), and set per-customer values where needed.
+- [ ] Clear the dashboard's **Area unconfirmed** list (pin each site or extend `sla_areas`).
 - [ ] Make sure every emergency-capable contractor has a **mobile number**.
 - [ ] Create staff users with least privilege (ops / finance / admin).
 - [ ] Onboard contractors: verify trades, insurance and licences, agree rate cards, approve.

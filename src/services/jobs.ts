@@ -12,7 +12,8 @@ import { accountPosition, type AccountPosition } from './ledger.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
 import { type Priority, buildEstimateCostLines, loadApprovedRules, priceCostLines, type PricingResult } from './pricing.js';
 import { getSettings, type Settings } from './settings.js';
-import { classifyPriority, isEscalatedAboveTriage, priorityLabel, reclassifyPriority, startSlaClock, type TriageAnswers } from './sla.js';
+import { makeSafeScope, type MakeSafeScope, notifyMakeSafeDispatch, unfundedPosition } from './p1Scope.js';
+import { classifyPriority, isEscalatedAboveTriage, priorityLabel, reclassifyPriority, refreshSiteArea, smsEscalationPhones, startSlaClock, type TriageAnswers } from './sla.js';
 import { TIME_WINDOW_LABELS, type TimeWindow, classifyTime, loadHolidays } from './timeWindows.js';
 
 export const PRIORITIES: Priority[] = ['emergency', 'urgent', 'standard', 'scheduled'];
@@ -156,6 +157,19 @@ export async function createBooking(db: Db, actor: Actor, rawInput: BookingInput
     if (customer.po_required && !input.poNumber?.trim()) throw new AppError('A purchase order number is required for this account');
     const site = await maybeOne(c, 'SELECT * FROM sites WHERE id = $1 AND customer_id = $2 AND is_active', [input.siteId, input.customerId]);
     if (!site) throw new AppError('Select one of your sites');
+    const settingsForArea = await getSettings(c);
+    const area = await refreshSiteArea(c, site.id, settingsForArea);
+    if (area.source === 'unconfirmed') {
+      await notifyStaff(c, ['ops', 'admin'], {
+        template: 'site_area_unconfirmed', subject: `Confirm SLA area: ${site.name} (${site.suburb || 'no suburb'})`,
+        body: `${site.address}, ${site.suburb || ''} is not in any SLA area. Pin it to an area or add the suburb to Settings → sla_areas.\n${link(`/admin/customers/${input.customerId}`)}`,
+        idempotencyKey: `site-area-unconfirmed:${site.id}`,
+      });
+      if (input.priority !== 'emergency' || !settingsForArea.unconfirmed_area_allows_p1) {
+        throw new AppError(`Ridgeline needs to confirm the service area for ${site.name} before jobs can be booked there. We have been notified; ` +
+          'for an emergency, call us now.', 409, 'area_unconfirmed');
+      }
+    }
     if (input.facilityId) {
       const f = await maybeOne(c, 'SELECT id FROM facilities WHERE id = $1 AND customer_id = $2 AND site_id = $3', [input.facilityId, input.customerId, input.siteId]);
       if (!f) throw new AppError('Facility does not belong to the selected site');
@@ -192,16 +206,7 @@ export async function createBooking(db: Db, actor: Actor, rawInput: BookingInput
       await c.query('UPDATE jobs SET customer_approved_by = $2, customer_approved_at = now() WHERE id = $1', [job.id, actor.id]);
     }
     if (needsApproval && input.priority === 'emergency') {
-      // Nothing holds a P1: it is dispatched now and an authorised approver is asked to ratify the estimate.
-      await recordJobEvent(c, actor, job.id, 'approval.retrospective', {
-        note: `Emergency dispatched without waiting for approval: estimate ${formatNzd(estimateTotal)} exceeds the authority limit of ${formatNzd(customer.authority_limit_cents)}`,
-      });
-      await notifyCustomer(c, input.customerId, {
-        template: 'job_emergency_over_limit', subject: `Emergency dispatched above your authority limit: ${job.ref}`,
-        body: `Emergency job ${job.ref} (${job.title}) has an estimated charge of ${formatNzd(estimateTotal)}, above your authority limit of ` +
-          `${formatNzd(customer.authority_limit_cents)}. Emergencies are dispatched immediately; please review the job and contact us if you have concerns.\n${link(`/app/jobs/${job.id}`)}`,
-        idempotencyKey: `emergency-over-limit:${job.id}`,
-      });
+      // Nothing delays a P1: it is dispatched now for make-safe scope only (see releaseForDispatchIfFunded).
       funding = await releaseForDispatchIfFunded(c, actor, job, settings);
     } else if (needsApproval) {
       await transitionJob(c, actor, job, 'awaiting_customer_approval', {
@@ -265,9 +270,25 @@ async function autoDispatch(db: Db, jobId: string) {
  * customer's available balance and releases the job to dispatch. Caller holds the job lock.
  */
 async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, settings: Settings, exception?: { id: string }): Promise<FundingCheck> {
-  await one(c, 'SELECT id FROM customers WHERE id = $1 FOR UPDATE', [job.customer_id]);
+  const customer = await one(c, 'SELECT * FROM customers WHERE id = $1 FOR UPDATE', [job.customer_id]);
+  const fresh = await one(c, 'SELECT * FROM jobs WHERE id = $1', [job.id]);
   const position = await accountPosition(c, job.customer_id);
   const funding = evaluateFunding(position, job.estimate_total_cents, job.priority, settings);
+  const shortfall = funding.reasons.length > 0;
+
+  // P1: response is never limited, scope is. Unfunded or over-authority emergencies are authorised for make-safe only.
+  let scope: MakeSafeScope | null = null;
+  if (job.priority === 'emergency' && !fresh.scope_extended_at) {
+    const overAuthority = job.estimate_total_cents > customer.authority_limit_cents && !fresh.customer_approved_by;
+    if (shortfall || overAuthority) {
+      scope = makeSafeScope(fresh, customer, settings, shortfall && overAuthority ? 'unfunded_over_authority' : shortfall ? 'unfunded' : 'over_authority');
+    }
+    if (shortfall && !exception) {
+      const unfunded = await unfundedPosition(c, job.customer_id, settings);
+      if (unfunded.suspended) return holdSuspendedP1(c, actor, job, funding, unfunded.totalCents, unfunded.thresholdCents);
+    }
+  }
+
   if (!funding.ok && !exception) {
     if (job.status !== 'pending_funds') await transitionJob(c, actor, job, 'pending_funds', { note: funding.reasons.join('; ') });
     else await recordJobEvent(c, actor, job.id, 'funding.insufficient', { note: funding.reasons.join('; ') });
@@ -278,24 +299,61 @@ async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, setting
     });
     return funding;
   }
-  await c.query(`INSERT INTO job_commitments (customer_id, job_id, amount_cents) VALUES ($1,$2,$3)`, [job.customer_id, job.id, job.estimate_total_cents]);
+  const commitCents = scope ? scope.commitCents : job.estimate_total_cents;
+  // The part of this commitment not covered by available prepaid funds is unfunded exposure.
+  const unfundedCents = scope && shortfall ? Math.max(0, commitCents - Math.max(0, position.availableCents)) : 0;
+  await c.query(`INSERT INTO job_commitments (customer_id, job_id, amount_cents) VALUES ($1,$2,$3)`, [job.customer_id, job.id, commitCents]);
   const note = exception ? `Released under funding exception ${exception.id}`
-    : funding.emergencyOverride ? `EMERGENCY released despite: ${funding.reasons.join('; ')}` : 'Funding check passed';
+    : scope ? `EMERGENCY released for make-safe only (up to ${formatNzd(scope.capExGstCents)} ex GST)${shortfall ? ` despite: ${funding.reasons.join('; ')}` : ''}`
+    : 'Funding check passed';
   await transitionJob(c, actor, job, 'dispatch', { note, set: {
     released_at: { sql: 'COALESCE(released_at, now())' },
     ...(exception ? { funding_exception_id: { value: exception.id } } : {}),
+    ...(scope ? {
+      p1_scope: { value: 'make_safe' }, p1_scope_reason: { value: scope.reason }, p1_scope_cap_ex_gst_cents: { value: scope.capExGstCents },
+      authorised_contractor_cost_cents: { value: scope.authorisedContractorCostCents }, unfunded_cents: { value: unfundedCents },
+    } : {}),
   } });
   // P2–P4 clocks start at release; a P1 clock has been running since booking.
   const released = await one(c, 'SELECT * FROM jobs WHERE id = $1', [job.id]);
   if (job.priority !== 'emergency' || !released.sla_started_at) await recordSlaStart(c, actor, released);
-  if (funding.emergencyOverride) {
+  if (scope) {
+    await recordJobEvent(c, actor, job.id, 'p1.make_safe_scope', {
+      note: `Make-safe scope only (${scope.reason.replace(/_/g, ' ')}): up to ${formatNzd(scope.capExGstCents)} ex GST; contractor cost authorised ${formatNzd(scope.authorisedContractorCostCents)} ex GST; unfunded ${formatNzd(unfundedCents)}`,
+    });
+    await notifyMakeSafeDispatch(c, released, scope, shortfall ? `Please top up your account: ${funding.reasons.join('; ')}.` : '');
+  }
+  if (shortfall && job.priority === 'emergency') {
     await notifyStaff(c, ['finance', 'admin'], {
-      template: 'emergency_underfunded', subject: `Emergency job ${job.ref} dispatched with insufficient funds`,
-      body: `${job.ref} was released as an emergency although: ${funding.reasons.join('; ')}. Follow up the customer top-up.\n${link(`/admin/jobs/${job.id}`)}`,
+      template: 'emergency_underfunded', subject: `Emergency job ${job.ref} dispatched with insufficient funds (make-safe only)`,
+      body: `${job.ref} was released as an emergency for make-safe work only (cap ${formatNzd(scope?.capExGstCents ?? 0)} ex GST, unfunded ${formatNzd(unfundedCents)}) although: ${funding.reasons.join('; ')}. Follow up the customer top-up.\n${link(`/admin/jobs/${job.id}`)}`,
       idempotencyKey: `emergency-underfunded:${job.id}`,
     });
   }
   return funding;
+}
+
+/**
+ * The customer's unfunded balance has reached its threshold: this P1 is not dispatched automatically. The clock is
+ * already running from booking, so staff are alerted at once (email and SMS) to decide on a funding exception.
+ */
+async function holdSuspendedP1(c: Db, actor: Actor, job: any, funding: FundingCheck, unfundedCents: number, thresholdCents: number): Promise<FundingCheck> {
+  const why = `Automatic unfunded P1 dispatch suspended: unfunded balance ${formatNzd(unfundedCents)} has reached the ${formatNzd(thresholdCents)} threshold`;
+  if (job.status !== 'pending_funds') await transitionJob(c, actor, job, 'pending_funds', { note: why });
+  await recordJobEvent(c, actor, job.id, 'p1.unfunded_suspended', { note: `${why}. ${funding.reasons.join('; ')}` });
+  await notifyStaff(c, ['ops', 'finance', 'admin'], {
+    template: 'p1_unfunded_suspended', subject: `URGENT: P1 ${job.ref} held (unfunded threshold reached)`,
+    body: `${why}. The P1 clock is running from booking. Release it with a funding exception (make-safe scope) or contact the customer now.\n${link(`/admin/jobs/${job.id}`)}`,
+    idempotencyKey: `p1-suspended:${job.id}`,
+  });
+  await smsEscalationPhones(c, `URGENT P1 ${job.ref} HELD: customer unfunded balance over threshold. Decide funding exception now. ${link(`/admin/jobs/${job.id}`)}`, `p1-suspended-sms:${job.id}`);
+  await notifyCustomer(c, job.customer_id, {
+    template: 'p1_unfunded_suspended_customer', subject: `Emergency ${job.ref}: payment needed to dispatch`,
+    body: `We cannot dispatch emergency job ${job.ref} automatically because your account has ${formatNzd(unfundedCents)} outstanding without prepaid cover. ` +
+      `Our team has been alerted and will contact you. Topping up your account releases the job: ${link('/app/account')}`,
+    idempotencyKey: `p1-suspended-customer:${job.id}`,
+  });
+  return { ...funding, ok: false, emergencyOverride: false };
 }
 
 /** Customer approver approves a job whose estimate exceeds the agreed authority limit. */

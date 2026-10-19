@@ -5,6 +5,7 @@ import { isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { formatNzd, gstOn } from '../lib/money.js';
 import { audit } from './audit.js';
+import { isMakeSafeOnly } from './p1Scope.js';
 import { currentRateCard } from './contractors.js';
 import { lockJob, transitionJob } from './jobState.js';
 import { type AccountCode, postJournal, prepaidMovement } from './ledger.js';
@@ -79,6 +80,10 @@ export async function issueCustomerInvoice(db: Db, actor: Actor, invoiceId: stri
       throw new AppError(`Enter ${settings.company.legal_name}'s GST number in Admin → Settings before issuing GST invoices`, 409, 'gst_number_missing');
     }
     const job = await lockJob(c, inv.job_id);
+    if (isMakeSafeOnly(job) && inv.subtotal_ex_gst_cents > job.p1_scope_cap_ex_gst_cents) {
+      throw new AppError(`This emergency was authorised for make-safe work up to ${formatNzd(job.p1_scope_cap_ex_gst_cents)} ex GST; the invoice is ` +
+        `${formatNzd(inv.subtotal_ex_gst_cents)} ex GST. Record the customer's approval or a staff override on the job before issuing.`, 409, 'make_safe_cap');
+    }
     const disputes = await one<{ n: number }>(c, `SELECT COUNT(*)::int AS n FROM disputes WHERE job_id = $1 AND status IN ('open','investigating')`, [job.id]);
     if (disputes.n) throw new AppError('Resolve the open dispute on this job before invoicing', 409);
     if (job.status !== 'invoice_approved') throw new AppError('Job is not ready to invoice', 409);

@@ -1,7 +1,8 @@
 import type { Db } from '../db.js';
 import { one, query } from '../db.js';
 import { accountBalances } from './ledger.js';
-import { openSlaJobs, slaPerformance } from './sla.js';
+import { p1Exposure } from './p1Scope.js';
+import { areaUnconfirmedJobs, openSlaJobs, slaPerformance, unconfirmedSites } from './sla.js';
 
 /**
  * Operations dashboard figures. Customer prepaid balances are a LIABILITY and are reported separately from
@@ -26,7 +27,10 @@ export async function dashboard(db: Db, period: { from: string; to: string }) {
   const sla = await slaPerformance(db, period);
   const breaches = await one(db, `SELECT COUNT(*) FILTER (WHERE sla_onsite_breached_at IS NOT NULL OR sla_resolve_breached_at IS NOT NULL)::int AS breached,
       COUNT(*) FILTER (WHERE escalation_level > 0)::int AS escalated
-    FROM jobs WHERE status <> 'cancelled' AND (sla_started_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $1::date AND $2::date`, [period.from, period.to]);
+    FROM jobs WHERE status <> 'cancelled' AND COALESCE((sla_targets->>'area_confirmed')::boolean, true)
+      AND (sla_started_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $1::date AND $2::date`, [period.from, period.to]);
+  const areaUnconfirmed = { jobs: await areaUnconfirmedJobs(db, period), sites: await unconfirmedSites(db) };
+  const unfundedP1 = await p1Exposure(db);
   const ci = await one(db, `SELECT COUNT(*) FILTER (WHERE status IN ('submitted','flagged'))::int AS awaiting, COUNT(*) FILTER (WHERE status = 'flagged')::int AS flagged FROM contractor_invoices`);
   const custInv = await one(db, `SELECT COUNT(*) FILTER (WHERE status = 'draft')::int AS drafts,
       COUNT(*) FILTER (WHERE status <> 'draft' AND status <> 'void' AND issue_date BETWEEN $1 AND $2)::int AS issued_in_period,
@@ -63,6 +67,8 @@ export async function dashboard(db: Db, period: { from: string; to: string }) {
   const sales = margin.sales - credits.v;
   return {
     period,
+    areaUnconfirmed,
+    unfundedP1,
     gl,
     balanceSheet: {
       cash: (gl.BANK ?? 0) + (gl.STRIPE_CLEARING ?? 0),

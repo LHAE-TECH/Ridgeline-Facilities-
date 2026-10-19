@@ -5,6 +5,7 @@ import { isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { applyBps, formatNzd, formatQuantity, gstOn, qtyAmount } from '../lib/money.js';
 import { audit } from './audit.js';
+import { isMakeSafeOnly } from './p1Scope.js';
 import { currentRateCard } from './contractors.js';
 import { createCustomerInvoiceDraft, issueCustomerInvoice } from './customerInvoices.js';
 import { lockJob, transitionJob } from './jobState.js';
@@ -120,6 +121,10 @@ export async function validateContractorInvoice(db: Db, invoiceId: string): Prom
     const allowed = card ? applyBps(reportMaterials, 10000 + card.materials_margin_bps) : reportMaterials;
     if (materialsTotal > allowed) add('materials_exceed_report', `Materials billed ${formatNzd(materialsTotal)} exceed materials recorded in the completion report (${formatNzd(allowed)} incl. agreed margin)`);
     for (const f of report.review_flags ?? []) add(`evidence_${f.code}`, `Evidence flag: ${f.message}`);
+  }
+  if (isMakeSafeOnly(job) && job.authorised_contractor_cost_cents != null && inv.subtotal_ex_gst_cents > job.authorised_contractor_cost_cents) {
+    add('beyond_make_safe_scope', `Invoice ${formatNzd(inv.subtotal_ex_gst_cents)} ex GST exceeds the make-safe authorisation of ${formatNzd(job.authorised_contractor_cost_cents)}. ` +
+      'Work beyond make-safe needs customer approval or a staff override on the job first', 'blocking');
   }
   if (job.authorised_contractor_cost_cents != null && !job.cancelled_at) {
     const limit = applyBps(job.authorised_contractor_cost_cents, 10000 + settings.authorised_overrun_bps);
