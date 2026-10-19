@@ -2,7 +2,7 @@
 
 **For:** Ridgeline's lawyer
 **Re:** Customer service agreement, contractor agreement and privacy statement for LHA Holdings Limited (NZBN 9429052390173), trading as Ridgeline Facilities
-**Drafts:** `/terms/customer`, `/terms/contractor` and `/privacy` in the app (source: `src/views/terms-customer.ejs`, `src/views/terms-contractor.ejs`, `src/views/privacy.ejs`). Version strings are in `src/services/terms.ts` (currently `2026-10-v2`). Each customer's and contractor's acceptance is recorded with the version and a timestamp.
+**Drafts:** `/terms/customer`, `/terms/contractor` and `/privacy` in the app (source: `src/views/terms-customer.ejs`, `src/views/terms-contractor.ejs`, `src/views/privacy.ejs`). Version strings are in `src/services/terms.ts` (currently `2026-10-v2`). Each customer's and contractor's acceptance is recorded with the version, the user and a timestamp, in an append-only history. Each version is marked minor or material. After a material change, customers cannot book and contractors cannot accept work until they accept the new version at sign-in (tick-box acceptance after a summary of changes and a link to the full text). Contractors who have not accepted the make-safe clause are never given make-safe jobs. Please confirm this re-acceptance mechanism is adequate for a material variation.
 
 The drafts were written alongside the software and have not had any legal review. Please review the whole set, but we need specific advice on the four issues below. Each one comes with the facts of how the system actually works, because the agreements have to match what the system does. The brief deliberately gives facts and questions only; it cites no legal authority.
 

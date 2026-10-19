@@ -4,6 +4,7 @@ import type { Actor } from '../lib/actor.js';
 import { SYSTEM_ACTOR, isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { formatNzd } from '../lib/money.js';
+import { assertCustomerTermsCurrent } from './agreements.js';
 import { audit } from './audit.js';
 import { assertCustomerAccess } from './customers.js';
 import { dispatchJob } from './dispatch.js';
@@ -136,6 +137,8 @@ export function resolvePriority(chosen: Priority | null | undefined, triage: Tri
 export async function createBooking(db: Db, actor: Actor, rawInput: BookingInput) {
   assertCustomerAccess(actor, rawInput.customerId);
   if (!canBook(actor)) throw new ForbiddenError('Your role cannot book jobs');
+  // Customers on a superseded material version must accept the current agreement first.
+  if (actor.role === 'customer') await assertCustomerTermsCurrent(db, rawInput.customerId);
   const resolved = resolvePriority(rawInput.priority, rawInput.triage);
   const input = { ...rawInput, priority: resolved.priority };
   if (input.priority === 'scheduled' && !input.preferredStart) throw new AppError('Scheduled (P4) jobs need an agreed attendance date');

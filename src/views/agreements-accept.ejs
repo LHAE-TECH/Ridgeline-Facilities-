@@ -1,0 +1,16 @@
+<%- include('partials/head', { title: 'Updated agreement' }) %>
+<div class="page-head"><div><h1>Updated <%= pending.kind === 'customer' ? 'service agreement' : 'contractor agreement' %></h1>
+<small>Version <%= pending.status.current %><%= pending.status.accepted ? ' · you accepted ' + pending.status.accepted : '' %></small></div></div>
+<div class="card">
+  <p>Our <%= pending.kind === 'customer' ? 'service agreement' : 'contractor agreement' %> has changed in ways that affect your rights or obligations.
+  <%= pending.kind === 'customer' ? 'Jobs cannot be booked' : 'Job offers cannot be accepted' %> until the current version is accepted.</p>
+  <h2>What changed</h2>
+  <ul><% pending.status.changes.forEach(function (v) { %><li><strong><%= v.version %></strong> (<%= v.materiality %>): <%= v.summary %></li><% }) %></ul>
+  <p><a href="/terms/<%= pending.kind %>" target="_blank" rel="noopener">Read the full agreement (version <%= pending.status.current %>)</a></p>
+  <% if (pending.canAccept) { %>
+  <form method="post" action="/agreements/accept" class="stack"><%- include('partials/csrf') %><input type="hidden" name="next" value="<%= next %>">
+    <label class="check"><input type="checkbox" name="accept" required> I have read and accept version <%= pending.status.current %><%= pending.kind === 'customer' ? ' on behalf of my organisation' : '' %></label>
+    <button type="submit">Accept and continue</button></form>
+  <% } else { %><p class="notice">Only an account owner or approver can accept the service agreement for your organisation. Please ask them to sign in and accept it.</p><% } %>
+</div>
+<%- include('partials/foot') %>

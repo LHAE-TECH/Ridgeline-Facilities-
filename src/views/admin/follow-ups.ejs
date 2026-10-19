@@ -1,18 +1,27 @@
 <%- include('../partials/head', { title: 'Follow-ups' }) %>
-<div class="page-head"><div><h1>Follow-ups after make-safe</h1><small>Outstanding work recorded on make-safe jobs. Book a follow-up job or dismiss it with a reason; nothing is left silently.</small></div></div>
-<% if (!followUps.length) { %><div class="card"><p class="muted">No open follow-ups.</p></div><% } %>
+<div class="page-head"><div><h1>Follow-ups after make-safe</h1><small>Outstanding work recorded on make-safe jobs. Flagged at <%= settings.follow_up_flag_days %> days, escalated to operations and administrators (and the customer reminded) at <%= settings.follow_up_escalate_days %> days. Nothing is ever deleted.</small></div>
+<div><a class="btn secondary small" href="/admin/follow-ups.csv?status=<%= status %>">Export CSV</a></div></div>
+<div class="tabs"><% [['open','Open'],['booked','Booked'],['declined_by_customer','Declined by customer'],['dismissed','Dismissed'],['all','All']].forEach(function (t) { %>
+  <a class="btn small <%= status === t[0] ? '' : 'secondary' %>" href="/admin/follow-ups?status=<%= t[0] %>"><%= t[1] %></a> <% }) %></div>
+<% if (!followUps.length) { %><div class="card"><p class="muted">None.</p></div><% } %>
 <% followUps.forEach(function (f) { %>
 <div class="card">
-  <h2><a href="/admin/jobs/<%= f.job_id %>"><%= f.job_ref %></a>: <%= f.job_title %></h2>
-  <p class="muted"><%= f.customer_name %> · <%= f.site_name %> · <%= f.trade_name %> · open <%= f.age_hours %> h<% if (f.made_safe_at) { %> · made safe <%= dt(f.made_safe_at) %><% } %></p>
+  <h2><a href="/admin/jobs/<%= f.job_id %>"><%= f.job_ref %></a>: <%= f.job_title %>
+    <% if (f.status === 'open') { %><span class="badge <%= f.band === 'escalated' ? 'err' : f.band === 'aged' ? 'warn' : 'ok' %>"><%= f.age_days %> days<%= f.band !== 'current' ? ' · ' + f.band : '' %></span><% } else { %><span class="badge"><%= humanize(f.status) %></span><% } %></h2>
+  <p class="muted"><%= f.customer_name %> · <%= f.site_name %> · <%= f.trade_name %> · raised <%= dt(f.created_at) %><% if (f.made_safe_at) { %> · made safe <%= dt(f.made_safe_at) %><% } %>
+    · customer told <%= f.customer_notified_at ? dt(f.customer_notified_at) : 'not yet' %><% if (f.customer_reminded_at) { %> · reminded <%= dt(f.customer_reminded_at) %><% } %></p>
   <p><strong>Outstanding:</strong> <%= f.description %></p>
-  <div class="grid-2">
+  <% if (f.status !== 'open') { %><p><strong><%= humanize(f.status) %></strong> <%= dt(f.decided_at) %> by <%= f.decided_by_name || '—' %><%= f.decided_on_behalf_of_customer ? " (recorded on the customer's behalf)" : '' %>
+    <% if (f.decision_note) { %>: <%= f.decision_note %><% } %><% if (f.follow_up_job_id) { %> · <a href="/admin/jobs/<%= f.follow_up_job_id %>"><%= f.follow_up_job_ref %></a><% } %></p><% } %>
+  <% if (f.status === 'open' && actor.role !== 'finance') { %>
+  <div class="grid-3">
     <form method="post" action="/admin/follow-ups/<%= f.id %>/book" class="stack"><%- include('../partials/csrf') %>
-      <div class="grid-2"><select name="priority"><% Object.keys(priorityMeta).forEach(function (p) { %><option value="<%= p %>" <%= p === 'standard' ? 'selected' : '' %>><%= priorityMeta[p].code %> <%= priorityMeta[p].label %></option><% }) %></select>
-      <input type="datetime-local" name="preferred_start" title="Required for P4 Scheduled"></div>
-      <input name="note" placeholder="Note for the follow-up job (optional)"><button type="submit">Book follow-up job</button></form>
+      <select name="priority"><% Object.keys(priorityMeta).forEach(function (p) { %><option value="<%= p %>" <%= p === 'standard' ? 'selected' : '' %>><%= priorityMeta[p].code %> <%= priorityMeta[p].label %></option><% }) %></select>
+      <input type="datetime-local" name="preferred_start" title="Required for P4 Scheduled"><input name="note" placeholder="Note (optional)"><button type="submit">Book follow-up job</button></form>
+    <form method="post" action="/admin/follow-ups/<%= f.id %>/customer-declined" class="stack"><%- include('../partials/csrf') %>
+      <input name="reason" required placeholder="Customer's reason for not proceeding"><button class="secondary" type="submit">Record customer declined</button></form>
     <form method="post" action="/admin/follow-ups/<%= f.id %>/dismiss" class="stack"><%- include('../partials/csrf') %>
-      <input name="reason" required placeholder="Reason (e.g. customer arranging own tradesperson)"><button class="secondary" type="submit">Dismiss</button></form>
-  </div>
+      <input name="reason" required placeholder="Reason (e.g. duplicate of RF-J-…)"><button class="secondary" type="submit">Dismiss</button></form>
+  </div><% } %>
 </div><% }) %>
 <%- include('../partials/foot') %>

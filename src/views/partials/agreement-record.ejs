@@ -1,0 +1,9 @@
+<div class="card"><h2>Agreement</h2>
+  <p>Current version <strong><%= agreement.status.current %></strong><% if (agreement.status.required !== agreement.status.current) { %> (minimum accepted: <%= agreement.status.required %>)<% } %>.
+  Accepted: <strong><%= agreement.status.accepted || 'none' %></strong><% if (agreement.acceptedAt) { %> on <%= dt(agreement.acceptedAt) %><% } %>
+  <% if (agreement.status.needsAcceptance) { %> <span class="badge err">Re-acceptance required</span><% } else { %> <span class="badge ok">Up to date</span><% } %></p>
+  <% if (agreement.extra) { %><p class="field-hint"><%= agreement.extra %></p><% } %>
+  <div class="table-wrap"><table><tr><th>Version</th><th>Accepted</th><th>By</th><th>How</th></tr>
+  <% agreement.history.forEach(function (h) { %><tr><td><%= h.version %></td><td><%= dt(h.accepted_at) %></td><td><%= h.accepted_by_name || '—' %></td><td><%= humanize(h.source) %></td></tr><% }) %>
+  <% if (!agreement.history.length) { %><tr><td colspan="4" class="muted">No acceptance recorded</td></tr><% } %></table></div>
+</div>

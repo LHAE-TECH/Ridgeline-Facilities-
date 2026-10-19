@@ -4,13 +4,17 @@ import type { Actor } from '../lib/actor.js';
 import { SYSTEM_ACTOR, isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { audit } from './audit.js';
+import { assertContractorAgreementCurrent } from './agreements.js';
 import { isMakeSafeOnly } from './p1Scope.js';
+import { versionIncludesMakeSafe } from './terms.js';
 import { DOCUMENT_TYPES } from './contractors.js';
 import { lockJob, recordJobEvent, transitionJob } from './jobState.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff, smsContractor } from './notifications.js';
 import { priorityLabel, smsEscalationPhones } from './sla.js';
 import { getSettings } from './settings.js';
 import { classifyTime, loadHolidays, localParts } from './timeWindows.js';
+
+export const MAKE_SAFE_AGREEMENT_REASON = 'Has not accepted an agreement with the make-safe clause (required for make-safe jobs)';
 
 export interface ContractorAssessment {
   contractorId: string;
@@ -80,6 +84,8 @@ export async function assessContractorsForJob(db: Db, jobId: string): Promise<Co
     if (c.active_jobs >= c.max_concurrent_jobs) reasons.push(`At capacity (${c.active_jobs}/${c.max_concurrent_jobs} active jobs)`);
     if (job.priority === 'emergency' && !c.emergency_available) reasons.push('Not available for emergency response');
     if (job.priority === 'emergency' && !c.mobile_phone) reasons.push('No mobile number for SMS emergency dispatch');
+    // Capping a job at make-safe relies on the contractor having agreed the make-safe clause (agreement 4A).
+    if (isMakeSafeOnly(job) && !versionIncludesMakeSafe(c.agreement_version)) reasons.push(MAKE_SAFE_AGREEMENT_REASON);
     if (window !== 'standard' && !c.after_hours_available) reasons.push('Not available outside standard hours');
     for (const d of requiredDocs) {
       if (!(c.valid_docs ?? []).includes(d)) reasons.push(`Missing or expired: ${DOCUMENT_TYPES[d] ?? d}`);
@@ -285,6 +291,7 @@ async function finaliseAssignment(c: Db, actor: Actor, job: any, contractorId: s
  */
 export async function acceptOffer(db: Db, actor: Actor, offerId: string) {
   if (actor.role !== 'contractor' || !actor.contractorId) throw new ForbiddenError('Only contractors can accept offers');
+  await assertContractorAgreementCurrent(db, actor.contractorId);
   return tx(db, async (c) => {
     const offer = await maybeOne(c, 'SELECT * FROM job_offers WHERE id = $1', [offerId]);
     if (!offer || offer.contractor_id !== actor.contractorId) throw new NotFoundError('Offer');
@@ -355,6 +362,10 @@ export async function manualAssign(db: Db, actor: Actor, jobId: string, contract
     if (!['dispatch', 'offered', 'assigned', 'on_site', 'in_progress'].includes(job.status)) throw new AppError('Job cannot be assigned in its current status', 409);
     const assessment = (await assessContractorsForJob(c, jobId)).find((a) => a.contractorId === contractorId);
     if (!assessment) throw new NotFoundError('Contractor');
+    if (assessment.reasons.includes(MAKE_SAFE_AGREEMENT_REASON)) {
+      throw new AppError('This is a make-safe job and the contractor has not accepted an agreement with the make-safe clause. This cannot be overridden.', 409, 'not_eligible');
+    }
+    await assertContractorAgreementCurrent(c, contractorId);
     if (!assessment.eligible) {
       if (actor.role !== 'admin' || !overrideReason?.trim()) {
         throw new AppError(`Contractor is not eligible: ${assessment.reasons.join('; ')}. An administrator may override with a reason.`, 409, 'not_eligible');

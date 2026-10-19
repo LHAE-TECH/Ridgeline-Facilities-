@@ -6,6 +6,7 @@ import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { audit } from './audit.js';
 import { hashPassword } from './customers.js';
 import { isNzMobile, normaliseNzPhone } from '../lib/phone.js';
+import { recordAcceptance } from './agreements.js';
 import { CONTRACTOR_AGREEMENT_VERSION } from './terms.js';
 
 export const DOCUMENT_TYPES: Record<string, string> = {
@@ -67,17 +68,21 @@ export async function createContractor(db: Db, actor: Actor, input: ContractorIn
     const contractor = await one(c,
       `INSERT INTO contractors (legal_name, trading_name, nzbn, business_address, email, phone, gst_registered, gst_number, bank_account_name,
          bank_account_number, payment_terms_days, service_regions, base_lat, base_lng, service_radius_km, after_hours_available,
-         emergency_available, max_concurrent_jobs, independent_contractor_ack_at, mobile_phone, agreement_version, agreement_accepted_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18, CASE WHEN $19 THEN now() END, $20,
-               CASE WHEN $21 THEN $22 END, CASE WHEN $21 THEN now() END) RETURNING *`,
+         emergency_available, max_concurrent_jobs, independent_contractor_ack_at, mobile_phone)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18, CASE WHEN $19 THEN now() END, $20) RETURNING *`,
       [input.legalName.trim(), input.tradingName || null, input.nzbn || null, input.businessAddress || null, input.email, input.phone || null,
        input.gstRegistered, input.gstRegistered ? input.gstNumber!.trim() : null, input.bankAccountName || null, input.bankAccountNumber || null,
        input.paymentTermsDays ?? 7, input.serviceRegions, input.baseLat ?? null, input.baseLng ?? null, input.serviceRadiusKm ?? null,
        input.afterHoursAvailable ?? false, input.emergencyAvailable ?? false, input.maxConcurrentJobs ?? 5, input.independentContractorAck ?? false,
-       mobile, input.agreementAccepted ?? false, CONTRACTOR_AGREEMENT_VERSION]);
+       mobile]);
     try {
-      await c.query(`INSERT INTO users (email, password_hash, name, phone, role, contractor_id) VALUES ($1,$2,$3,$4,'contractor',$5)`,
+      const user = await one(c, `INSERT INTO users (email, password_hash, name, phone, role, contractor_id) VALUES ($1,$2,$3,$4,'contractor',$5) RETURNING id`,
         [input.email, hash, input.contactName, input.phone || null, contractor.id]);
+      // Only the contractor can accept their agreement (self-registration); staff-created contractors accept at first sign-in.
+      if (input.agreementAccepted && actor.role !== 'admin' && actor.role !== 'ops') {
+        await recordAcceptance(c, { id: user.id, role: 'contractor', name: input.contactName, contractorId: contractor.id, ip: actor.ip }, 'contractor', contractor.id, 'registration');
+        Object.assign(contractor, { agreement_version: CONTRACTOR_AGREEMENT_VERSION });
+      }
     } catch (err) {
       if (isUniqueViolation(err)) throw new AppError('A user with that email already exists', 409);
       throw err;

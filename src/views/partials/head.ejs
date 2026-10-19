@@ -8,6 +8,9 @@
 <script src="/static/app.js" defer></script>
 </head>
 <body>
+<% if (locals.agreementPending) { %><div class="notice err" style="margin:0;border-radius:0;text-align:center"><strong>Updated agreement (<%= locals.agreementPending.status.current %>):</strong>
+  <%= locals.agreementPending.kind === 'customer' ? 'jobs cannot be booked' : 'job offers cannot be accepted' %> until it is accepted.
+  <% if (locals.agreementPending.canAccept) { %><a href="/agreements/accept">Review and accept</a><% } else { %>Ask your account owner or approver to accept it.<% } %></div><% } %>
 <% if (locals.deploymentEnvironment === 'staging') { %><div class="notice warn" style="margin:0;border-radius:0;text-align:center"><strong>STAGING</strong>: test environment. Test-mode payments and a test SMS account only; no real customers.</div><% } %>
 <header class="topbar"><div class="inner">
   <a class="brand" href="/">Ridgeline Facilities<% if (actor) { %><span><%= orgName %></span><% } %></a>

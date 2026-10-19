@@ -110,6 +110,9 @@ export const SETTING_DEFAULTS = {
   // At the threshold, hold unfunded P1s for an on-call or finance decision (true), or keep dispatching them for
   // make-safe scope and only alert staff (false). Clocks run from booking either way.
   p1_hold_at_threshold: true,
+  // Follow-ups after make-safe: flag on the dashboard after N days open; escalate to ops/admin and remind the customer after M days.
+  follow_up_flag_days: 14,
+  follow_up_escalate_days: 30,
   // A site whose suburb is in no SLA area needs staff confirmation before booking. P1 is still accepted (nothing
   // holds an emergency) unless this is switched off; such jobs are excluded from SLA reporting until confirmed.
   unconfirmed_area_allows_p1: true,
@@ -162,6 +165,8 @@ export const SETTING_DESCRIPTIONS: Partial<Record<SettingKey, string>> = {
   monthly_report_enabled: 'Master switch for emailing monthly customer reports (each customer must also be switched on)',
   p1_unfunded_cap_ex_gst_cents: 'Make-safe cap (customer price, cents ex GST) for P1 jobs dispatched without funds or above the authority limit; per-customer override on the customer page',
   p1_unfunded_suspend_threshold_cents: 'Unfunded balance (cents incl GST: receivables plus unfunded open P1 jobs) at which automatic unfunded P1 dispatch stops for a customer; per-customer override',
+  follow_up_flag_days: 'Days a make-safe follow-up can stay open before it is flagged as aged on the dashboard',
+  follow_up_escalate_days: 'Days open before a follow-up is escalated to operations and administrators and the customer is reminded',
   p1_hold_at_threshold: 'At the unfunded threshold, hold P1 jobs for an on-call/finance release (on) or keep dispatching them for make-safe scope and alert staff (off). The P1 clock is never paused',
   unconfirmed_area_allows_p1: 'Accept P1 bookings at a site whose SLA area is not yet confirmed (other priorities wait for staff confirmation)',
   dispatch_wave_size: 'Contractors offered per dispatch wave, best SLA fit first (0 = all who can meet the SLA)',

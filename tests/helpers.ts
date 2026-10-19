@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { pool, one, query } from '../src/db.js';
 import type { Actor } from '../src/lib/actor.js';
 import { SYSTEM_ACTOR } from '../src/lib/actor.js';
+import { recordAcceptance } from '../src/services/agreements.js';
 import { acceptAssessment, runAssessment } from '../src/services/assessment.js';
 import { addComplianceDocument, createContractor, reviewComplianceDocument, setContractorTrade, setRateCard } from '../src/services/contractors.js';
 import { addFacility, addSite, registerCustomer } from '../src/services/customers.js';
@@ -61,7 +62,7 @@ export async function newCustomer(opts: { category?: string; facilities?: { type
   const email = `owner-${uniq()}@customer.test`;
   const { customer, user } = await registerCustomer(db, SYSTEM_ACTOR, {
     organisationName: `Customer ${uniq()}`, billingEmail: email, customerCategory: opts.category ?? 'residential',
-    contactName: 'Olivia Owner', contactEmail: email, password: 'correct-horse-battery',
+    contactName: 'Olivia Owner', contactEmail: email, password: 'correct-horse-battery', termsAccepted: true,
   });
   const owner: Actor = { id: user.id, role: 'customer', name: 'Olivia Owner', email, customerId: customer.id, customerRole: 'owner' };
   const site = await addSite(db, owner, customer.id, { name: 'Main site', address: '1 Queen Street', suburb: opts.suburb ?? 'Auckland Central', city: 'Auckland', region: opts.region ?? 'Auckland',
@@ -89,7 +90,7 @@ export interface ContractorFixture { contractorId: string; actor: Actor }
 
 /** Approved, compliant contractor with a verified trade and agreed rate card. */
 export async function approvedContractor(opts: { trade?: string; regions?: string[]; gstRegistered?: boolean; labourRate?: number; callout?: number;
-  emergencyCallout?: number; emergency?: boolean; afterHours?: boolean; mobile?: string | null; lat?: number; lng?: number } = {}): Promise<ContractorFixture> {
+  emergencyCallout?: number; emergency?: boolean; afterHours?: boolean; mobile?: string | null; lat?: number; lng?: number; agreement?: string | null } = {}): Promise<ContractorFixture> {
   const admin = await staff('admin');
   const email = `contractor-${uniq()}@trade.test`;
   const gst = opts.gstRegistered ?? true;
@@ -109,6 +110,9 @@ export async function approvedContractor(opts: { trade?: string; regions?: strin
     emergencyCalloutCents: opts.emergencyCallout ?? 15000, travelPerKmCents: 120, minChargeCents: 10000, cancellationFeeCents: 8000 });
   await db.query(`UPDATE contractors SET status = 'approved', base_lat = $2, base_lng = $3 WHERE id = $1`, [c.id, opts.lat ?? null, opts.lng ?? null]);
   const user = await one(db, 'SELECT id FROM users WHERE contractor_id = $1', [c.id]);
+  // The contractor accepts the current agreement (as at first sign-in); opts.agreement: null leaves it unaccepted.
+  if (opts.agreement !== null) await recordAcceptance(db, { id: user.id, role: 'contractor', name: 'Tom Trades', contractorId: c.id }, 'contractor', c.id);
+  if (opts.agreement) await db.query('UPDATE contractors SET agreement_version = $2 WHERE id = $1', [c.id, opts.agreement]);
   return { contractorId: c.id, actor: { id: user.id, role: 'contractor', name: 'Tom Trades', email, contractorId: c.id } };
 }
 

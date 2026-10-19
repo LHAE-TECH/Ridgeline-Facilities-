@@ -5,6 +5,7 @@ import { SYSTEM_ACTOR } from '../lib/actor.js';
 import { AppError } from '../lib/errors.js';
 import { audit } from '../services/audit.js';
 import { getSettings } from '../services/settings.js';
+import { acceptPendingAgreement, pendingAcceptanceFor } from '../services/agreements.js';
 import { CONTRACTOR_AGREEMENT_VERSION, CUSTOMER_TERMS_VERSION } from '../services/terms.js';
 import { createContractor } from '../services/contractors.js';
 import { CUSTOMER_CATEGORIES, NZ_REGIONS, registerCustomer } from '../services/customers.js';
@@ -44,7 +45,11 @@ authRouter.post('/login', async (req, res, next) => {
       pool.query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]).catch(() => undefined);
       audit(pool, { id: user.id, role: user.role, name: user.name, ip: req.ip }, { action: 'user.login', entityType: 'user', entityId: user.id }).catch(() => undefined);
       const nextUrl = str(req.body.next);
-      req.session.save(() => res.redirect(nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : homeFor(user.role)));
+      const dest = nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : homeFor(user.role);
+      // A superseded material agreement must be accepted at sign-in, by anyone able to accept it.
+      pendingAcceptanceFor(pool, { id: user.id, role: user.role, name: user.name, customerId: user.customer_id, customerRole: user.customer_role, contractorId: user.contractor_id })
+        .then((pending) => req.session.save(() => res.redirect(pending?.canAccept ? `/agreements/accept?next=${encodeURIComponent(dest)}` : dest)))
+        .catch(next);
     });
   } catch (err) {
     next(err);
@@ -92,5 +97,19 @@ authRouter.post('/contractors/apply', action(async (req) => {
 }));
 
 authRouter.get('/privacy', async (_req, res) => res.render('privacy', { company: (await getSettings(pool)).company }));
+authRouter.get('/agreements/accept', async (req, res) => {
+  if (!req.actor) return res.redirect('/login');
+  const pending = await pendingAcceptanceFor(pool, req.actor);
+  if (!pending) return res.redirect(homeFor(req.actor.role));
+  res.render('agreements-accept', { pending, next: str(req.query.next) });
+});
+authRouter.post('/agreements/accept', action(async (req) => {
+  if (!req.actor) throw new AppError('Please sign in', 401);
+  if (!bool(req.body.accept)) throw new AppError('Tick the box to confirm you accept the agreement');
+  const version = await acceptPendingAgreement(pool, { ...req.actor, ip: req.ip });
+  const nextUrl = str(req.body.next);
+  return { redirect: nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : homeFor(req.actor.role), message: `Agreement ${version} accepted` };
+}));
+
 authRouter.get('/terms/customer', async (_req, res) => res.render('terms-customer', { company: (await getSettings(pool)).company, version: CUSTOMER_TERMS_VERSION }));
 authRouter.get('/terms/contractor', async (_req, res) => res.render('terms-contractor', { company: (await getSettings(pool)).company, version: CONTRACTOR_AGREEMENT_VERSION }));

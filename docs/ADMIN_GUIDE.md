@@ -103,6 +103,16 @@ Changing assumptions does not change agreed balances. Recalculate and re-agree a
 - **Escalation**: if no contractor has accepted within `escalation_minutes` (P1 10, P2 60, P3 240, P4 1440), staff get an SMS (to `escalation_staff_phones`) and an email. A P1 with no eligible contractor at all escalates immediately.
 - Enter the on-call phone numbers in **Settings → General → escalation_staff_phones**, e.g. `["021 555 0100"]`.
 
+## Agreements and re-acceptance
+
+Agreement versions are listed in `src/services/terms.ts`. Each one is marked **minor** (wording only; existing acceptances carry over) or **material** (rights or obligations change; everyone on an earlier version must accept again). Version `2026-10-v2` of both agreements is **material**.
+
+- A customer on a superseded material version **cannot book** until an account owner or approver accepts the current version. Owners and approvers are taken to the acceptance page at sign-in; other users see a banner asking them to get it accepted. Staff can still book on a customer's behalf (for example, an emergency by phone).
+- A contractor on a superseded material version **cannot accept offers or be assigned manually** until they accept. They are taken to the acceptance page at sign-in.
+- A contractor whose accepted version lacks the make-safe clause (4A) is **never offered or assigned a make-safe job**, and this cannot be overridden. Without that clause, capping their work would rely on terms they never agreed to.
+- Customer and contractor records show the current version, what the party accepted and when, a re-acceptance flag, and the full acceptance history. History is append-only.
+- When the text changes, add a new version in `terms.ts` (never edit a published one), mark it minor or material, and update the template.
+
 ## Booking rules and exceptions
 
 - **Funding check** at booking: routine and urgent jobs are held (`pending_funds`) while the prepaid balance is below the agreed minimum, or when the available balance (balance minus amounts committed to open jobs) is less than the job estimate.
@@ -119,7 +129,16 @@ Changing assumptions does not change agreed balances. Recalculate and re-agree a
     - **Off:** jobs keep dispatching for make-safe scope, and staff are alerted that the threshold was exceeded.
   - Open exposure is capped at the account's real shortfall (commitments minus balance), so several P1s sharing one balance are counted once, and a top-up reduces it immediately.
 - **On-call P1 release right**: Admin → Staff users → *Grant right* (a NZ mobile is required). The page warns if nobody holds it, or if an escalation phone belongs to nobody with the right (that phone would get the alert without the authority to act).
-- **Make-safe work** means the minimum work reasonably necessary to remove or control an immediate risk of injury or further damage until a permanent repair is arranged (contractor agreement clause 4A). On a make-safe job the contractor's completion report must state **what was made safe** and **what remains outstanding**: both are required to submit, and to close the job. The outstanding work becomes a **follow-up** (Admin → Follow-ups, and on the dashboard). Staff **book** it as a new job (normal funding and approval rules apply) or **dismiss** it with a reason; both are audited. Nothing is left silently.
+- **Make-safe work** means the minimum work reasonably necessary to remove or control an immediate risk of injury or further damage until a permanent repair is arranged (contractor agreement clause 4A). On a make-safe job the contractor's completion report must state **what was made safe** and **what remains outstanding**: both are required to submit, and to close the job.
+- **Follow-ups** (Admin → Follow-ups). The outstanding work becomes a follow-up, and the customer is emailed straight away with what was made safe and what is still outstanding.
+  - Every open follow-up shows its age. At `follow_up_flag_days` (default 14) it is flagged as **aged** and operations are emailed. At `follow_up_escalate_days` (default 30) it is **escalated**: operations and administrators are emailed and the customer is reminded. Each happens once.
+  - The dashboard counts open follow-ups within the age limit, aged follow-ups and escalated follow-ups **separately**, and lists the aged ones.
+  - Each follow-up ends one of three ways, all recorded with who and when:
+    - **booked** as a new job;
+    - **declined by the customer**, with their reason (owners and approvers can record this on their job page; staff can record it on their behalf, which is marked);
+    - **dismissed** by staff with a reason.
+  - Nothing is ever deleted; the database refuses it. The Booked / Declined / Dismissed / All tabs and **Export CSV** report every follow-up with its reason.
+  - Closing the original job is not blocked by an open follow-up.
 - Raising a held job to P1 releases it at once (subject to the rules above), with its clock running from the original booking time.
 - **Funding exception**: on a held job, finance or admin can release it with a recorded reason.
 - **Authority limit** (per customer, incl GST): P2–P4 jobs whose estimate exceeds it wait for an owner or approver.

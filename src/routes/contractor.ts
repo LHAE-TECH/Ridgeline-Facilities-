@@ -6,6 +6,7 @@ import { getContractorInvoiceForActor, submitContractorInvoice } from '../servic
 import { addComplianceDocument, contractorProfile, currentRateCard, DOCUMENT_TYPES, updateContractor } from '../services/contractors.js';
 import { raiseDispute } from '../services/disputes.js';
 import { acceptOffer, declineOffer } from '../services/dispatch.js';
+import { pendingAcceptanceFor } from '../services/agreements.js';
 import { addEvidence, completeJob, evidenceStatus, markMadeSafe, recordArrival, startWork, submitQuote, type EvidenceKind } from '../services/evidence.js';
 import { getJobForActor } from '../services/jobs.js';
 import { payableAmount } from '../services/payables.js';
@@ -17,6 +18,10 @@ import { action, actor, arr, bool, dollars, geo, int, multipart, newKey, num, op
 
 export const contractorRouter = Router();
 contractorRouter.use(requireRole('contractor'));
+contractorRouter.use(async (req, res, next) => {
+  res.locals.agreementPending = await pendingAcceptanceFor(pool, actor(req));
+  next();
+});
 
 const kid = (req: any): string => actor(req).contractorId!;
 

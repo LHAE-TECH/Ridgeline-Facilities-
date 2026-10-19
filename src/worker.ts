@@ -3,6 +3,7 @@ import { pool, query } from './db.js';
 import { advanceDispatchWaves, escalateUnassigned, expireOffers } from './services/dispatch.js';
 import { checkSlaBreaches } from './services/sla.js';
 import { processAutoTopUps } from './services/autoTopUp.js';
+import { processFollowUpAgeing } from './services/followUps.js';
 import { sendMonthlyReports } from './services/monthlyReport.js';
 import { autoCloseJobs } from './services/jobs.js';
 import { deliverPending, link, notifyContractor, notifyStaff } from './services/notifications.js';
@@ -40,6 +41,7 @@ export async function runWorkerCycle(db: Db = pool): Promise<CycleResult | null>
       ['sla', () => checkSlaBreaches(db)],
       ['autoTopUps', () => processAutoTopUps(db)],
       ['lowBalances', () => processLowBalances(db)],
+      ['followUpAgeing', () => processFollowUpAgeing(db)],
       ['monthlyReports', () => sendMonthlyReports(db)],
       ['complianceAlerts', () => complianceExpiryAlerts(db)],
       ['closedJobs', () => autoCloseJobs(db)],

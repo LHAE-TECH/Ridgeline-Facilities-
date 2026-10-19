@@ -61,6 +61,7 @@
     <% } else { %><p class="muted">Finance role required.</p><% } %>
   </div>
 </div>
+<%- include('../partials/agreement-record', { agreement: agreement }) %>
 <div class="card"><h2>Unfunded emergency exposure</h2><dl class="kv">
   <dt>Unpaid invoices</dt><dd><%= money(unfunded.receivableCents) %></dd>
   <dt>Unfunded open P1 jobs</dt><dd><%= money(unfunded.openP1UnfundedCents) %></dd>
@@ -79,7 +80,6 @@
 <div class="grid-2">
   <div class="card"><h2>Payments</h2><% payments.forEach(function (p) { %><p class="mono"><%= p.reference %> · <%= humanize(p.method) %> · <%= money(p.amount_cents) %> · <%- include('../partials/status', { s: p.status }) %></p><% }) %></div>
   <div class="card"><h2>Contacts</h2><% users.forEach(function (u) { %><p><%= u.name %> · <%= u.email %> · <%= u.customer_role %><%= u.is_active ? '' : ' (inactive)' %></p><% }) %>
-  <p>Terms: <%= customer.terms_version ? 'accepted ' + customer.terms_version + ' on ' + date(customer.terms_accepted_at) : 'not recorded' %></p>
   <p>Saved card: <%= card ? card.brand.toUpperCase() + ' ending ' + card.last4 : 'none' %></p>
   <% if (consent) { %><p class="notice <%= consent.failure_count ? 'err' : 'ok' %>"><%= consent.payment_method_id ? 'Card auto top-up' : 'Auto top-up requests' %>: <%= consent.failure_count ? consent.failure_count + ' recent failure(s) – ' + consent.last_failure_reason + '. ' : '' %> <%= money(consent.amount_cents) %> below <%= money(consent.trigger_below_cents) %> (since <%= date(consent.consented_at) %>)</p><% } %></div>
 </div>

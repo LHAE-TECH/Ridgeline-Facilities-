@@ -8,6 +8,7 @@ import { audit } from './audit.js';
 import { getSettings } from './settings.js';
 import { link, notifyStaff } from './notifications.js';
 import { refreshSiteArea } from './sla.js';
+import { recordAcceptance } from './agreements.js';
 import { CUSTOMER_TERMS_VERSION } from './terms.js';
 
 export const CUSTOMER_CATEGORIES = ['residential', 'commercial', 'body_corporate', 'retail', 'industrial', 'mixed', 'custom'];
@@ -70,7 +71,7 @@ export async function registerCustomer(db: Db, actor: Actor, input: RegisterCust
       throw err;
     }
     if (input.termsAccepted) {
-      await c.query('UPDATE customers SET terms_version = $2, terms_accepted_at = now(), terms_accepted_by = $3 WHERE id = $1', [customer.id, CUSTOMER_TERMS_VERSION, user.id]);
+      await recordAcceptance(c, { id: user.id, role: 'customer', name: input.contactName, customerId: customer.id, customerRole: 'owner', ip: actor.ip }, 'customer', customer.id, 'registration');
     }
     await audit(c, { ...actor, id: actor.id ?? user.id }, { action: 'customer.registered', entityType: 'customer', entityId: customer.id, customerId: customer.id,
       details: { termsVersion: input.termsAccepted ? CUSTOMER_TERMS_VERSION : null } });

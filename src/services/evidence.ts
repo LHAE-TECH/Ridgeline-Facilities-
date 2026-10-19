@@ -184,11 +184,20 @@ export async function completeJob(db: Db, actor: Actor, jobId: string, input: Co
        input.madeSafeSummary?.trim() || null, input.outstandingWork?.trim() || null]);
     if (makeSafe) {
       // The outstanding work becomes a follow-up suggestion that staff must book or dismiss with a reason.
-      await c.query(
+      const f = await one(c,
         `INSERT INTO follow_up_suggestions (job_id, customer_id, site_id, trade_id, completion_report_id, description)
          VALUES ($1,$2,$3,$4,$5,$6)
-         ON CONFLICT (job_id) WHERE status = 'open' DO UPDATE SET description = EXCLUDED.description, completion_report_id = EXCLUDED.completion_report_id`,
+         ON CONFLICT (job_id) WHERE status = 'open' DO UPDATE SET description = EXCLUDED.description, completion_report_id = EXCLUDED.completion_report_id
+         RETURNING id, customer_notified_at`,
         [jobId, job.customer_id, job.site_id, job.trade_id, report.id, input.outstandingWork!.trim()]);
+      if (!f.customer_notified_at) {
+        // The customer is told at once what was made safe and what is still outstanding.
+        await notifyCustomer(c, job.customer_id, { template: 'follow_up_customer', subject: `${job.ref}: made safe, further work outstanding`,
+          body: `The emergency at your property (${job.ref}) has been made safe: ${input.madeSafeSummary!.trim()}\n\nStill outstanding: ${input.outstandingWork!.trim()}\n\n` +
+            `We will contact you to arrange this work. If you do not want to proceed, you can tell us (with a reason) on the job page: ${link(`/app/jobs/${jobId}`)}`,
+          idempotencyKey: `follow-up-customer:${f.id}` });
+        await c.query('UPDATE follow_up_suggestions SET customer_notified_at = now() WHERE id = $1', [f.id]);
+      }
       await notifyStaff(c, ['ops', 'admin'], { template: 'follow_up_suggested', subject: `Follow-up needed after make-safe: ${job.ref}`,
         body: `Made safe: ${input.madeSafeSummary!.trim()}\nOutstanding: ${input.outstandingWork!.trim()}\nBook or dismiss the follow-up: ${link('/admin/follow-ups')}`,
         idempotencyKey: `follow-up:${report.id}` });

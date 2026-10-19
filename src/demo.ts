@@ -6,6 +6,7 @@ import { SYSTEM_ACTOR } from './lib/actor.js';
 import { acceptAssessment, runAssessment } from './services/assessment.js';
 import { addComplianceDocument, createContractor, reviewComplianceDocument, setContractorTrade, setRateCard } from './services/contractors.js';
 import { addFacility, addSite, registerCustomer } from './services/customers.js';
+import { recordAcceptance } from './services/agreements.js';
 import { recordBankReceipt } from './services/payments.js';
 
 export const DEMO_PASSWORD = 'demo-password-123';
@@ -34,6 +35,7 @@ export async function seedDemo(db: Db) {
   const { customer, user } = await registerCustomer(db, SYSTEM_ACTOR, {
     organisationName: 'Harbourside Property Management', billingEmail: 'accounts@harbourside.demo', customerCategory: 'residential',
     contactName: 'Hana Harbourside', contactEmail: 'customer@demo.ridgeline.test', password: DEMO_PASSWORD, phone: '09 555 0100', billingAddress: '12 Quay Street, Auckland',
+    termsAccepted: true,
   });
   const owner: Actor = { id: user.id, role: 'customer', name: 'Hana', customerId: customer.id, customerRole: 'owner' };
   const site = await addSite(db, owner, customer.id, { name: 'Harbour View Apartments', address: '88 Customs Street', suburb: 'Auckland Central', city: 'Auckland', region: 'Auckland',
@@ -52,6 +54,9 @@ export async function seedDemo(db: Db) {
     gstNumber: '123-456-789', bankAccountName: 'Kiwi Fix-It Services', bankAccountNumber: '12-3456-7890123-00', serviceRegions: ['Auckland'],
     afterHoursAvailable: true, emergencyAvailable: true, contactName: 'Kiri Fixit', password: DEMO_PASSWORD, independentContractorAck: true,
   });
+  // Demo contractor has accepted the current agreement (a real contractor accepts it themselves at sign-in).
+  const kiri = await one(db, 'SELECT id FROM users WHERE contractor_id = $1', [contractor.id]);
+  await recordAcceptance(db, { id: kiri.id, role: 'contractor', name: 'Kiri Fixit', contractorId: contractor.id }, 'contractor', contractor.id);
   for (const code of ['general', 'plumbing']) {
     const tid = (await one(db, 'SELECT id FROM trades WHERE code = $1', [code])).id;
     await setContractorTrade(db, admin, contractor.id, tid, { verified: true, qualification: code === 'plumbing' ? 'PGDB 12345' : 'Experienced' });

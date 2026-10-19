@@ -1,6 +1,13 @@
 <%- include('../partials/head', { title: job.ref }) %>
 <div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><%= job.site_name %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <strong><%= prio(job.priority) %></strong></small></div>
 <div><%- include('../partials/status', { s: job.status }) %></div></div>
+<% followUps.forEach(function (f) { %><div class="notice <%= f.status === 'open' ? 'warn' : '' %>"><strong>Still outstanding after making safe:</strong> <%= f.description %>
+  <% if (f.status === 'open') { %> Ridgeline will contact you to arrange it.
+    <% if (['owner','approver'].includes(actor.customerRole)) { %><form method="post" action="/app/follow-ups/<%= f.id %>/decline" class="inline-form"><%- include('../partials/csrf') %>
+      <input name="reason" required placeholder="Reason for not proceeding"><button class="small secondary" type="submit">We don't want to proceed</button></form><% } %>
+  <% } else if (f.status === 'declined_by_customer') { %> You chose not to proceed (<%= dt(f.decided_at) %>): <%= f.decision_note %>
+  <% } else if (f.status === 'booked') { %> Booked as <a href="/app/jobs/<%= f.follow_up_job_id %>">a follow-up job</a>.
+  <% } else { %> Closed by Ridgeline <%= dt(f.decided_at) %>.<% } %></div><% }) %>
 <% if (job.hold_reason) { %><div class="notice"><%= job.hold_reason %></div><% } %>
 <% if (job.p1_scope === 'make_safe' && !job.scope_extended_at && !['closed','cancelled'].includes(job.status)) { %>
 <div class="notice warn"><strong>Make-safe work only.</strong> This emergency was dispatched immediately; the contractor is authorised to make the site safe, up to <%= money(job.p1_scope_cap_ex_gst_cents) %> ex GST.

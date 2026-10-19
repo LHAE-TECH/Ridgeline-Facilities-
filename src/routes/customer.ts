@@ -13,6 +13,8 @@ import { AUTO_TOPUP_CONSENT_TEXT, grantAutoTopUpConsent, requestPayment, request
 import { completionReportPdf, customerInvoicePdf, monthlyReportPdf, statementPdf } from '../services/pdf.js';
 import { monthlyReportsEnabledFor } from '../services/monthlyReport.js';
 import { extendP1Scope } from '../services/p1Scope.js';
+import { declineFollowUp, followUpsForJob } from '../services/followUps.js';
+import { pendingAcceptanceFor } from '../services/agreements.js';
 import { createCardSetupCheckout, describeCard, removeCard, savedCard } from '../services/autoTopUp.js';
 import { areaUnconfirmedJobs, PRIORITY_META, TRIAGE_QUESTIONS, slaPerformance } from '../services/sla.js';
 import { getSettings } from '../services/settings.js';
@@ -22,6 +24,15 @@ import { formatNzd } from '../lib/money.js';
 
 export const customerRouter = Router();
 customerRouter.use(requireRole('customer'));
+// Page-wide state for the nav and banners; registered before every route so all pages get it.
+customerRouter.use(async (req, res, next) => {
+  res.locals.reportsEnabled = await monthlyReportsEnabledFor(pool, cid(req));
+  next();
+});
+customerRouter.use(async (req, res, next) => {
+  res.locals.agreementPending = await pendingAcceptanceFor(pool, actor(req));
+  next();
+});
 
 const cid = (req: any): string => actor(req).customerId!;
 
@@ -224,8 +235,14 @@ customerRouter.get('/jobs/:id', async (req, res) => {
     WHERE job_id = $1 AND status IN ('sent_to_customer','approved','declined') ORDER BY created_at`, [job.id]);
   const invoice = await maybeOne(pool, `SELECT * FROM customer_invoices WHERE job_id = $1 AND status NOT IN ('draft','void')`, [job.id]);
   const disputes = await query(pool, `SELECT * FROM disputes WHERE job_id = $1 ORDER BY created_at`, [job.id]);
-  res.render('customer/job', { job, events, evidence, report, quotes, invoice, disputes });
+  const followUps = await followUpsForJob(pool, job.id);
+  res.render('customer/job', { job, events, evidence, report, quotes, invoice, disputes, followUps });
 });
+
+customerRouter.post('/follow-ups/:id/decline', action(async (req) => {
+  const f = await declineFollowUp(pool, actor(req), pid(req), str(req.body.reason));
+  return { redirect: `/app/jobs/${f.job_id}`, message: 'Your decision has been recorded' };
+}));
 
 customerRouter.post('/jobs/:id/approve-scope', action(async (req) => {
   await extendP1Scope(pool, actor(req), pid(req), optStr(req.body.note));
@@ -287,10 +304,6 @@ customerRouter.post('/invoices/:id/pay', action(async (req, res) => {
 }));
 
 // ---- Monthly reports (off unless enabled globally and for this customer) ----
-customerRouter.use(async (req, res, next) => {
-  res.locals.reportsEnabled = await monthlyReportsEnabledFor(pool, cid(req));
-  next();
-});
 customerRouter.use('/reports', (req, res, next) => {
   if (!res.locals.reportsEnabled) throw new AppError('Monthly reports are not enabled for this account', 404);
   next();

@@ -18,7 +18,8 @@ src/
     pricing.ts         Customer pricing rules engine (35% markup etc.), estimates, rule approval
     sla.ts             Published P1–P4 matrix: triage, targets, Auckland areas, breach/at-risk checks, performance reporting
     p1Scope.ts         Make-safe scope cap for unfunded/over-authority P1, scope extensions, unfunded exposure, threshold holds and alerts
-    followUps.ts       Follow-up suggestions from make-safe outstanding work (book or dismiss with reason)
+    followUps.ts       Follow-ups from make-safe outstanding work: ageing/escalation, customer notices and decisions, reporting
+    agreements.ts      Agreement acceptance (append-only history), re-acceptance gates; versions and materiality in terms.ts
     businessTime.ts    NZ business-hours arithmetic (holidays, DST) for SLA clocks
     sms.ts             Twilio transport, status-callback signature verification
     autoTopUp.ts       Saved cards (Stripe SetupIntents) and off-session automatic top-ups
@@ -110,8 +111,9 @@ Guarantees:
 | — | SMS dispatch | `sms.test.ts` (mocked Twilio): never-sent-unless-accepted; invalid numbers; outage retried, rejected number failed at once; signed status callbacks; P1 broadcast/confirmation/taken; 10-minute escalation. `sms-live.test.ts` (**real Twilio and handset; needs credentials and `SMS_TEST_MOBILE`; not yet run**): real delivery, delivery receipt via the webhook, failed number recorded as failed |
 | — | Saved-card auto top-ups (round 2) | `auto-topup.test.ts` (logic with a fake Stripe client) and `stripe-live.test.ts` (**real Stripe test mode, needs `STRIPE_TEST_SECRET_KEY`; not yet run**) |
 | — | Legal entity, assessment taper, demo guard (round 2) | `entity-assessment-demo.test.ts` |
+| — | Agreements, follow-up ageing, key guards | `agreements-followups.test.ts`: minor vs material versions; customer booking blocked until owner/approver re-accepts at sign-in (booker cannot); contractor without make-safe clause never offered or assigned make-safe jobs (no override) and must re-accept before accepting offers; history on records; follow-up customer notice, 14-day flag and 30-day escalation with customer reminder (once each), customer decline with reason, dismissed kept and reportable (delete refused), CSV; production/staging key guards |
 | — | P1 holds, make-safe reports, concurrency | `p1-hold-makesafe.test.ts`: on-call release (make-safe only, reason, audit, only right-holders), hold SMS to release holders, clock never paused, hold reported separately, hold ended by top-up, hold setting off; make-safe report fields required, follow-up raised and booked/dismissed; concurrent P1s at the same site and at two sites: no double-spend, combined exposure counted once against the threshold (verified to fail without the customer row lock) |
 | — | Unfunded P1 scope and unconfirmed areas | `p1-scope-areas.test.ts`: make-safe scope and cap (global and per customer), over-authority scope, beyond-make-safe blocked until customer approval or staff override with reason, invoice cap guard, unfunded exposure on the dashboard, suspension threshold and funding exception; unconfirmed site blocks P2–P4 booking, P1 accepted but excluded from SLA reporting until confirmed, recalculation on confirmation |
 | 18 | Works on mobile and desktop | `e2e/workflow.test.ts` › full workflow through the UI on a 390 px phone and 1366 px desktop; every page checked for horizontal overflow |
 
-Run: `npm test` (138 tests; the 2 live Stripe and 2 live Twilio tests are skipped unless their credentials are set). `npm run test:live` runs the live suites.
+Run: `npm test` (144 tests; the 2 live Stripe and 2 live Twilio tests are skipped unless their credentials are set). `npm run test:live` runs the live suites.

@@ -19,7 +19,7 @@ One container plus managed PostgreSQL. The application is a single Node process:
 | --- | --- | --- |
 | Deploys | Manually (`autoDeploy: false`), after staging passes | Automatically from `main` |
 | `DEPLOYMENT_ENVIRONMENT` | `production` | `staging` (shows a STAGING banner on every page) |
-| Stripe | Live keys | **Test keys only**: the app refuses to start on staging with an `sk_live_` key |
+| Stripe | **Live keys only**: production refuses to start with an `sk_test_`/`rk_test_` key or `TWILIO_TEST_MODE=true` | **Test keys only**: the app refuses to start on staging with an `sk_live_` key |
 | Twilio | Production account | Dedicated subaccount with a low spend cap |
 | Email | Production SMTP | Sandbox / test inbox: staging must never email real customers |
 | Data | Real | Test customers, sites and contractors only (staff handsets as contractor mobiles) |

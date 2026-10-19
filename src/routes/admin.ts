@@ -9,8 +9,10 @@ import { contractorProfile, createContractor, DOCUMENT_TYPES, reviewComplianceDo
 import { applyPrepaidToInvoice, createCreditNote, getCustomerInvoiceForActor, issueCustomerInvoice, outstandingCents, recalculateDraft } from '../services/customerInvoices.js';
 import { CUSTOMER_CATEGORIES, hashPassword, NZ_REGIONS, portfolio, SERVICE_LEVELS, setSiteArea, updateCustomerTerms } from '../services/customers.js';
 import { assessContractorsForJob, dispatchJob, manualAssign, rankForSla, unassign } from '../services/dispatch.js';
+import { acceptanceHistory } from '../services/agreements.js';
+import { acceptanceStatus, versionIncludesMakeSafe } from '../services/terms.js';
 import { extendP1Scope, p1HoldAlertRecipients, unfundedPosition } from '../services/p1Scope.js';
-import { bookFollowUp, dismissFollowUp, followUpsForJob, openFollowUps } from '../services/followUps.js';
+import { bookFollowUp, declineFollowUp, dismissFollowUp, followUpCsv, followUpReport, followUpsForJob, openFollowUps } from '../services/followUps.js';
 import { isNzMobile, normaliseNzPhone } from '../lib/phone.js';
 import { areaForSite, PRIORITY_META, slaLegState, TRIAGE_QUESTIONS } from '../services/sla.js';
 import { raiseDispute, resolveDispute, setDisputeInvestigating } from '../services/disputes.js';
@@ -48,7 +50,7 @@ function monthRange(q: any): { from: string; to: string } {
 
 adminRouter.get('/', async (req, res) => {
   const period = monthRange(req.query);
-  res.render('admin/dashboard', { d: await dashboard(pool, period), integrations: integrationStatus() });
+  res.render('admin/dashboard', { d: await dashboard(pool, period), integrations: integrationStatus(), settings: await getSettings(pool) });
 });
 
 // ---------------------------------------------------------------- Customers
@@ -80,7 +82,8 @@ adminRouter.get('/customers/:id', async (req, res) => {
   const slaAreas = settings.sla_areas;
   const siteAreas = Object.fromEntries(data.sites.map((s: any) => [s.id, areaForSite(s, slaAreas)]));
   const unfunded = await unfundedPosition(pool, customer.id, settings);
-  res.render('admin/customer', { customer, ...data, siteAreas, slaAreas, unfunded, settingsDefaults: settings, position, assessment, txns, payments, jobs, users, invoices, recon, refunds, consent, card,
+  const agreement = { status: acceptanceStatus('customer', customer.terms_version), acceptedAt: customer.terms_accepted_at, history: await acceptanceHistory(pool, 'customer', customer.id) };
+  res.render('admin/customer', { customer, ...data, siteAreas, slaAreas, unfunded, settingsDefaults: settings, agreement, position, assessment, txns, payments, jobs, users, invoices, recon, refunds, consent, card,
     categories: CUSTOMER_CATEGORIES, levels: SERVICE_LEVELS, key: newKey(), outstandingCents });
 });
 
@@ -203,9 +206,20 @@ adminRouter.post('/jobs/:id/on-call-release', action(async (req) => {
   await releaseHeldP1OnCall(pool, actor(req), pid(req), str(req.body.reason));
   return { redirect: `/admin/jobs/${pid(req)}`, message: 'P1 released for make-safe work; reason recorded' };
 }));
-adminRouter.get('/follow-ups', async (_req, res) => {
-  res.render('admin/follow-ups', { followUps: await openFollowUps(pool), priorityMeta: PRIORITY_META });
+adminRouter.get('/follow-ups', async (req, res) => {
+  const status = str(req.query.status) || 'open';
+  res.render('admin/follow-ups', { status, followUps: status === 'open' ? await openFollowUps(pool) : await followUpReport(pool, { status }),
+    priorityMeta: PRIORITY_META, settings: await getSettings(pool) });
 });
+adminRouter.get('/follow-ups.csv', async (req, res) => {
+  const rows = await followUpReport(pool, { status: str(req.query.status) || 'all', from: optStr(req.query.from), to: optStr(req.query.to) });
+  res.type('text/csv').setHeader('Content-Disposition', 'attachment; filename="follow-ups.csv"');
+  res.send(followUpCsv(rows));
+});
+adminRouter.post('/follow-ups/:id/customer-declined', action(async (req) => {
+  await declineFollowUp(pool, actor(req), pid(req), str(req.body.reason));
+  return { redirect: '/admin/follow-ups', message: "Customer's decision recorded (on their behalf)" };
+}));
 adminRouter.post('/follow-ups/:id/book', action(async (req) => {
   const job = await bookFollowUp(pool, actor(req), pid(req), { priority: str(req.body.priority) as any, preferredStart: optStr(req.body.preferred_start) ?? null, note: optStr(req.body.note) });
   return { redirect: `/admin/jobs/${job.id}`, message: `Follow-up job ${job.ref} booked` };
@@ -290,7 +304,10 @@ adminRouter.get('/contractors/:id', async (req, res) => {
   const trades = await query(pool, 'SELECT id, name FROM trades WHERE is_active ORDER BY name');
   const payables = await query(pool, `SELECT p.*, ci.invoice_number, j.ref AS job_ref FROM contractor_payables p JOIN contractor_invoices ci ON ci.id = p.contractor_invoice_id
     JOIN jobs j ON j.id = p.job_id WHERE p.contractor_id = $1 ORDER BY p.created_at DESC LIMIT 50`, [pid(req)]);
-  res.render('admin/contractor', { ...profile, allTrades: trades, regions: NZ_REGIONS, documentTypes: DOCUMENT_TYPES, payables, payableAmount });
+  const ag = acceptanceStatus('contractor', profile.contractor.agreement_version);
+  const agreement = { status: ag, acceptedAt: profile.contractor.agreement_accepted_at, history: await acceptanceHistory(pool, 'contractor', profile.contractor.id),
+    extra: versionIncludesMakeSafe(profile.contractor.agreement_version) ? 'Has accepted the make-safe clause: eligible for make-safe jobs.' : 'Has NOT accepted the make-safe clause: never offered or assigned make-safe jobs.' };
+  res.render('admin/contractor', { ...profile, agreement, allTrades: trades, regions: NZ_REGIONS, documentTypes: DOCUMENT_TYPES, payables, payableAmount });
 });
 
 adminRouter.post('/contractors/:id', action(async (req) => {

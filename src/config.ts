@@ -63,10 +63,8 @@ export const config = {
   },
 };
 
-// Staging must never take real money: refuse to start with a live Stripe key.
-if (config.deploymentEnvironment === 'staging' && config.stripe.secretKey.startsWith('sk_live_')) {
-  throw new Error('Staging refuses to start with a live Stripe key (sk_live_…); use test-mode keys');
-}
+// Staging must never take real money; production must never silently take fake money. Refuse to start otherwise.
+assertKeysMatchEnvironment(config.deploymentEnvironment, config.stripe.secretKey, env.TWILIO_TEST_MODE);
 if (config.isProduction && config.sessionSecret === 'dev-only-session-secret') {
   throw new Error('SESSION_SECRET must be set in production');
 }
@@ -99,4 +97,14 @@ export function integrationStatus(): Record<string, { mode: IntegrationMode; det
       : { mode: 'unconfigured', detail: 'Twilio credentials not set: SMS offers and escalations are recorded but NOT sent' },
     contractorPayouts: { mode: 'unconfigured', detail: 'No payout provider: payments are made by bank batch export and confirmed manually' },
   };
+}
+
+export function assertKeysMatchEnvironment(environment: string, stripeSecretKey: string, twilioTestMode: string | undefined): void {
+  if (environment === 'staging' && stripeSecretKey.startsWith('sk_live_')) {
+    throw new Error('Staging refuses to start with a live Stripe key (sk_live_…); use test-mode keys');
+  }
+  if (environment === 'production') {
+    if (/^(sk|rk)_test_/.test(stripeSecretKey)) throw new Error('Production refuses to start with a Stripe test key (sk_test_…); use the live key or leave Stripe unset');
+    if (twilioTestMode === 'true') throw new Error('Production refuses to start with TWILIO_TEST_MODE=true (Twilio test credentials never deliver)');
+  }
 }
