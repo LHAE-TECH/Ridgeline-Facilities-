@@ -12,9 +12,10 @@ import { accountPosition, type AccountPosition } from './ledger.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
 import { type Priority, buildEstimateCostLines, loadApprovedRules, priceCostLines, type PricingResult } from './pricing.js';
 import { getSettings, type Settings } from './settings.js';
+import { classifyPriority, isEscalatedAboveTriage, priorityLabel, startSlaClock, type TriageAnswers } from './sla.js';
 import { TIME_WINDOW_LABELS, type TimeWindow, classifyTime, loadHolidays } from './timeWindows.js';
 
-export const PRIORITIES: Priority[] = ['routine', 'urgent', 'emergency'];
+export const PRIORITIES: Priority[] = ['emergency', 'urgent', 'standard', 'scheduled'];
 
 export interface BookingInput {
   customerId: string;
@@ -22,7 +23,10 @@ export interface BookingInput {
   facilityId?: string | null;
   unitId?: string | null;
   tradeId: number;
-  priority: Priority;
+  /** Priority chosen by the booker. If omitted, the triage classification is used. */
+  priority?: Priority | null;
+  /** Intake triage answers; the classification can only raise, never lower, the chosen priority for safety. */
+  triage?: TriageAnswers;
   title: string;
   description: string;
   accessInstructions?: string;
@@ -42,7 +46,7 @@ export interface Estimate {
   disclaimer: string;
 }
 
-export async function estimateJob(db: Db, input: Pick<BookingInput, 'customerId' | 'tradeId' | 'priority' | 'preferredStart'>): Promise<Estimate> {
+export async function estimateJob(db: Db, input: Pick<BookingInput, 'customerId' | 'tradeId' | 'preferredStart'> & { priority: Priority }): Promise<Estimate> {
   const trade = await maybeOne(db, 'SELECT * FROM trades WHERE id = $1 AND is_active', [input.tradeId]);
   if (!trade) throw new AppError('Select a valid job category');
   const settings = await getSettings(db);
@@ -105,10 +109,34 @@ function canApproveCharge(actor: Actor, amountCents: number, customer: any): boo
  * held (pending_funds / awaiting_customer_approval) and the customer is told what is needed.
  * Idempotent per customer + idempotency key, so a double-submitted form creates one job.
  */
-export async function createBooking(db: Db, actor: Actor, input: BookingInput) {
-  assertCustomerAccess(actor, input.customerId);
+/**
+ * Resolves the job priority from the booker's choice and the intake triage. A triage result that is more urgent
+ * than the choice wins (a reported safety risk is never booked below P1). A choice more urgent than the triage is
+ * kept but flagged for operations to review.
+ */
+export function resolvePriority(chosen: Priority | null | undefined, triage: TriageAnswers | undefined): { priority: Priority; suggested: Priority | null; note: string | null } {
+  if (chosen && !PRIORITIES.includes(chosen)) throw new AppError('Invalid priority');
+  if (!triage) {
+    if (!chosen) throw new AppError('Select a priority');
+    return { priority: chosen, suggested: null, note: null };
+  }
+  const suggested = classifyPriority(triage);
+  if (!chosen) return { priority: suggested, suggested, note: null };
+  if (isEscalatedAboveTriage(suggested, chosen)) {
+    return { priority: suggested, suggested, note: `Raised from ${priorityLabel(chosen)} to ${priorityLabel(suggested)} by intake triage` };
+  }
+  if (isEscalatedAboveTriage(chosen, suggested)) {
+    return { priority: chosen, suggested, note: `Booker chose ${priorityLabel(chosen)}; triage suggested ${priorityLabel(suggested)}. Review classification.` };
+  }
+  return { priority: chosen, suggested, note: null };
+}
+
+export async function createBooking(db: Db, actor: Actor, rawInput: BookingInput) {
+  assertCustomerAccess(actor, rawInput.customerId);
   if (!canBook(actor)) throw new ForbiddenError('Your role cannot book jobs');
-  if (!PRIORITIES.includes(input.priority)) throw new AppError('Invalid priority');
+  const resolved = resolvePriority(rawInput.priority, rawInput.triage);
+  const input = { ...rawInput, priority: resolved.priority };
+  if (input.priority === 'scheduled' && !input.preferredStart) throw new AppError('Scheduled (P4) jobs need an agreed attendance date');
   if (!input.title?.trim() || !input.description?.trim()) throw new AppError('Describe the problem');
   if (input.preferredStart && input.preferredEnd && new Date(input.preferredEnd) <= new Date(input.preferredStart)) {
     throw new AppError('Preferred window end must be after its start');
@@ -140,19 +168,19 @@ export async function createBooking(db: Db, actor: Actor, input: BookingInput) {
     const settings = await getSettings(c);
     const estimate = await estimateJob(c, input);
     const estimateTotal = estimate.pricing.totalCents;
-    const sla = settings.sla_hours[input.priority];
 
     const job = await one(c,
       `INSERT INTO jobs (customer_id, site_id, facility_id, unit_id, trade_id, priority, title, description, access_instructions,
           site_contact_name, site_contact_phone, preferred_start, preferred_end, po_number, status, estimate, estimate_total_cents,
-          authorised_contractor_cost_cents, respond_by, attend_by, booked_by, idempotency_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending_funds',$15,$16,$17,
-               now() + ($18 || ' hours')::interval, now() + ($19 || ' hours')::interval, $20, $21) RETURNING *`,
+          authorised_contractor_cost_cents, booked_by, idempotency_key, triage, suggested_priority, priority_note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending_funds',$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
       [input.customerId, input.siteId, input.facilityId || null, input.unitId || null, input.tradeId, input.priority, input.title.trim(),
        input.description.trim(), input.accessInstructions || site.access_notes || null, input.siteContactName || null, input.siteContactPhone || null,
        input.preferredStart || null, input.preferredEnd || null, input.poNumber || null, JSON.stringify(estimate), estimateTotal,
-       estimate.pricing.contractorCostExGstCents, String(sla.respond), String(sla.attend), actor.id, input.idempotencyKey ?? null]);
-    await recordJobEvent(c, actor, job.id, 'created', { to: 'pending_funds', note: `Estimated ${formatNzd(estimateTotal)} incl. GST` });
+       estimate.pricing.contractorCostExGstCents, actor.id, input.idempotencyKey ?? null, input.triage ? JSON.stringify(input.triage) : null,
+       resolved.suggested, resolved.note]);
+    await recordJobEvent(c, actor, job.id, 'created', { to: 'pending_funds',
+      note: `${priorityLabel(input.priority)} · estimated ${formatNzd(estimateTotal)} incl. GST${resolved.note ? ` · ${resolved.note}` : ''}` });
 
     let funding: FundingCheck | null = null;
     const needsApproval = estimateTotal > customer.authority_limit_cents && !canApproveCharge(actor, estimateTotal, customer);
@@ -173,7 +201,7 @@ export async function createBooking(db: Db, actor: Actor, input: BookingInput) {
       funding = await releaseForDispatchIfFunded(c, actor, job, settings);
     }
     await notifyStaff(c, ['ops', 'admin'], {
-      template: 'job_booked', subject: `New ${input.priority} job ${job.ref}`,
+      template: 'job_booked', subject: `New ${priorityLabel(input.priority)} job ${job.ref}${resolved.note ? ' (check priority)' : ''}`,
       body: `${customer.name} booked ${job.ref}: ${job.title} (status: ${job.status}).\n${link(`/admin/jobs/${job.id}`)}`,
       idempotencyKey: `booked:${job.id}`,
     });
@@ -213,6 +241,9 @@ async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, setting
   const note = exception ? `Released under funding exception ${exception.id}`
     : funding.emergencyOverride ? `EMERGENCY released despite: ${funding.reasons.join('; ')}` : 'Funding check passed';
   await transitionJob(c, actor, job, 'dispatch', { note, set: exception ? { funding_exception_id: { value: exception.id } } : {} });
+  // The SLA clock starts when the job is accepted for dispatch.
+  const sla = await startSlaClock(c, job);
+  await recordJobEvent(c, actor, job.id, 'sla.started', { note: `${priorityLabel(job.priority)}: ${sla.onsiteLabel} (due ${sla.onsiteDue.toISOString()}); ${sla.resolveLabel} (due ${sla.resolveDue.toISOString()})` });
   if (funding.emergencyOverride) {
     await notifyStaff(c, ['finance', 'admin'], {
       template: 'emergency_underfunded', subject: `Emergency job ${job.ref} dispatched with insufficient funds`,
@@ -367,7 +398,7 @@ export async function autoCloseJobs(db: Db): Promise<number> {
 /** Jobs visible to the actor (data isolation is enforced here, not in the views). */
 export async function getJobForActor(db: Db, actor: Actor, jobId: string) {
   const job = await maybeOne(db,
-    `SELECT j.*, s.name AS site_name, s.address AS site_address, s.region AS site_region, s.hazards AS site_hazards, s.lat AS site_lat, s.lng AS site_lng,
+    `SELECT j.*, s.name AS site_name, s.address AS site_address, s.region AS site_region, s.is_metro AS site_is_metro, s.hazards AS site_hazards, s.lat AS site_lat, s.lng AS site_lng,
             t.name AS trade_name, t.code AS trade_code, t.before_photo_required, c.name AS customer_name, c.acknowledgement_required,
             f.name AS facility_name, u.label AS unit_label, k.legal_name AS contractor_legal_name, k.trading_name AS contractor_trading_name
        FROM jobs j JOIN sites s ON s.id = j.site_id JOIN trades t ON t.id = j.trade_id JOIN customers c ON c.id = j.customer_id

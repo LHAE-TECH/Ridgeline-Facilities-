@@ -16,6 +16,11 @@ src/
     dispatch.ts        Contractor eligibility, offers, acceptance, manual assignment, SLA alerts
     evidence.ts        Attendance, evidence, completion reports, review, quotes/variations
     pricing.ts         Customer pricing rules engine (35% markup etc.), estimates, rule approval
+    sla.ts             Published P1–P4 matrix: triage, targets, breach/at-risk checks, performance reporting
+    businessTime.ts    NZ business-hours arithmetic (holidays, DST) for SLA clocks
+    sms.ts             Twilio transport, status-callback signature verification
+    autoTopUp.ts       Saved cards (Stripe SetupIntents) and off-session automatic top-ups
+    monthlyReport.ts   Monthly customer report emails
     timeWindows.ts     NZ time-window classification (standard / after-hours / weekend / holiday / overnight)
     contractorInvoices.ts  Submission + validation against job, rate card, scope, evidence; approval
     customerInvoices.ts    Drafting from Ridgeline pricing, issue + prepaid settlement, payments, credit notes
@@ -99,6 +104,10 @@ Guarantees:
 | 15 | No duplicate financial transactions from retries/webhooks | `invoicing-payments.test.ts` › Stripe webhook processed once; journals immutable; `booking-ledger.test.ts` concurrency |
 | 16 | Refunds, variations, cancellations, disputes keep audit history | `invoicing-payments.test.ts` › criterion 16 suite; `booking-ledger.test.ts` › refunds |
 | 17 | No access to other parties' confidential records | `http-isolation.test.ts` (real HTTP sessions, CSRF, files, staff pages) |
+| — | SLA engine (round 2) | `sla.test.ts`: business-hours clock incl. holidays and DST; P1 metro/non-metro, P2, P3, P4 targets; triage; clock start; breach + SMS escalation; reclassification; dashboard and monthly report; SLA-ranked waves |
+| — | SMS dispatch (round 2) | `sms.test.ts`: never-sent-unless-accepted; invalid numbers; signed status callbacks; P1 broadcast/confirmation/taken; 10-minute escalation |
+| — | Saved-card auto top-ups (round 2) | `auto-topup.test.ts` (logic with a fake Stripe client) and `stripe-live.test.ts` (**real Stripe test mode, needs `STRIPE_TEST_SECRET_KEY`; not yet run**) |
+| — | Legal entity, assessment taper, demo guard (round 2) | `entity-assessment-demo.test.ts` |
 | 18 | Works on mobile and desktop | `e2e/workflow.test.ts` › full workflow through the UI on a 390 px phone and 1366 px desktop; every page checked for horizontal overflow |
 
-Run: `npm test` (70 tests).
+Run: `npm test` (109 tests; the 2 live Stripe tests are skipped unless `STRIPE_TEST_SECRET_KEY` is set).

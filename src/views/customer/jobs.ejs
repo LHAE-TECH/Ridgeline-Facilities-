@@ -3,6 +3,6 @@
   <form class="inline-form" method="get"><select name="status"><option value="">All statuses</option><% Object.keys(statuses).forEach(function (s) { %><option value="<%= s %>" <%= s === status ? 'selected' : '' %>><%= statuses[s] %></option><% }) %></select><button class="secondary" type="submit">Filter</button></form>
 </div>
 <div class="card"><div class="table-wrap"><table><tr><th>Job</th><th>Site</th><th>Trade</th><th>Priority</th><th>Status</th><th class="num">Estimate</th><th>Booked</th></tr>
-<% jobs.forEach(function (j) { %><tr><td><a href="/app/jobs/<%= j.id %>"><%= j.ref %></a><br><small><%= j.title %></small></td><td><%= j.site_name %></td><td><%= j.trade_name %></td><td><%= humanize(j.priority) %></td><td><%- include('../partials/status', { s: j.status }) %></td><td class="num"><%= money(j.estimate_total_cents) %></td><td><%= date(j.created_at) %></td></tr><% }) %>
+<% jobs.forEach(function (j) { %><tr><td><a href="/app/jobs/<%= j.id %>"><%= j.ref %></a><br><small><%= j.title %></small></td><td><%= j.site_name %></td><td><%= j.trade_name %></td><td><%= prio(j.priority) %></td><td><%- include('../partials/status', { s: j.status }) %></td><td class="num"><%= money(j.estimate_total_cents) %></td><td><%= date(j.created_at) %></td></tr><% }) %>
 <% if (!jobs.length) { %><tr><td colspan="7" class="muted">No jobs found.</td></tr><% } %></table></div></div>
 <%- include('../partials/foot') %>

@@ -5,6 +5,9 @@ import type { Actor } from '../lib/actor.js';
 import { isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { audit } from './audit.js';
+import { getSettings } from './settings.js';
+import { isMetroCity } from './sla.js';
+import { CUSTOMER_TERMS_VERSION } from './terms.js';
 
 export const CUSTOMER_CATEGORIES = ['residential', 'commercial', 'body_corporate', 'retail', 'industrial', 'mixed', 'custom'];
 export const SERVICE_LEVELS = ['standard', 'priority'];
@@ -42,6 +45,8 @@ export interface RegisterCustomerInput {
   contactName: string;
   contactEmail: string;
   password: string;
+  /** Acceptance of the customer service agreement (current version) at registration. */
+  termsAccepted?: boolean;
 }
 
 export async function registerCustomer(db: Db, actor: Actor, input: RegisterCustomerInput) {
@@ -63,7 +68,11 @@ export async function registerCustomer(db: Db, actor: Actor, input: RegisterCust
       if (isUniqueViolation(err)) throw new AppError('An account with that email already exists', 409);
       throw err;
     }
-    await audit(c, { ...actor, id: actor.id ?? user.id }, { action: 'customer.registered', entityType: 'customer', entityId: customer.id, customerId: customer.id });
+    if (input.termsAccepted) {
+      await c.query('UPDATE customers SET terms_version = $2, terms_accepted_at = now(), terms_accepted_by = $3 WHERE id = $1', [customer.id, CUSTOMER_TERMS_VERSION, user.id]);
+    }
+    await audit(c, { ...actor, id: actor.id ?? user.id }, { action: 'customer.registered', entityType: 'customer', entityId: customer.id, customerId: customer.id,
+      details: { termsVersion: input.termsAccepted ? CUSTOMER_TERMS_VERSION : null } });
     return { customer, user };
   });
 }
@@ -75,19 +84,31 @@ export async function getCustomer(db: Db, actor: Actor, customerId: string) {
   return c;
 }
 
-export interface SiteInput { name: string; address: string; suburb?: string; city?: string; region: string; postcode?: string; lat?: number | null; lng?: number | null; accessNotes?: string; hazards?: string }
+export interface SiteInput { name: string; address: string; suburb?: string; city?: string; region: string; postcode?: string; lat?: number | null; lng?: number | null; accessNotes?: string; hazards?: string; isMetro?: boolean }
 
 export async function addSite(db: Db, actor: Actor, customerId: string, input: SiteInput) {
   assertCustomerManager(actor, customerId);
   if (!input.name?.trim() || !input.address?.trim()) throw new AppError('Site name and address are required');
   if (!input.region) throw new AppError('Region is required');
+  // Metro status drives the P1 SLA target; derived from the configured metro cities unless staff set it explicitly.
+  const metroCities = (await getSettings(db)).metro_cities;
+  const isMetro = input.isMetro !== undefined && isStaff(actor) ? input.isMetro : isMetroCity(input.city, metroCities) || isMetroCity(input.region, metroCities);
   const site = await one(db,
-    `INSERT INTO sites (customer_id, name, address, suburb, city, region, postcode, lat, lng, access_notes, hazards)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    `INSERT INTO sites (customer_id, name, address, suburb, city, region, postcode, lat, lng, access_notes, hazards, is_metro)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
     [customerId, input.name.trim(), input.address.trim(), input.suburb || null, input.city || null, input.region, input.postcode || null,
-     input.lat ?? null, input.lng ?? null, input.accessNotes || null, input.hazards || null]);
+     input.lat ?? null, input.lng ?? null, input.accessNotes || null, input.hazards || null, isMetro]);
   await db.query('UPDATE customers SET region = COALESCE(region, $2) WHERE id = $1', [customerId, input.region]);
   await audit(db, actor, { action: 'site.created', entityType: 'site', entityId: site.id, customerId });
+  return site;
+}
+
+/** Staff override of a site's metro classification (affects P1 targets for jobs released after the change). */
+export async function setSiteMetro(db: Db, actor: Actor, siteId: string, isMetro: boolean) {
+  if (!isStaff(actor) || actor.role === 'finance') throw new ForbiddenError();
+  const site = await maybeOne(db, 'UPDATE sites SET is_metro = $2 WHERE id = $1 RETURNING *', [siteId, isMetro]);
+  if (!site) throw new NotFoundError('Site');
+  await audit(db, actor, { action: 'site.metro_set', entityType: 'site', entityId: siteId, customerId: site.customer_id, details: { isMetro } });
   return site;
 }
 

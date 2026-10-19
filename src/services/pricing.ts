@@ -22,7 +22,7 @@ export const RULE_CATEGORY_LABELS: Record<RuleCategory, string> = {
   variation: 'Approved variations', cancellation: 'Cancellation / failed attendance',
 };
 
-export type Priority = 'routine' | 'urgent' | 'emergency';
+export type Priority = 'emergency' | 'urgent' | 'standard' | 'scheduled';
 
 export interface PricingRule {
   id: string;

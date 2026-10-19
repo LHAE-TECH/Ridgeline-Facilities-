@@ -8,16 +8,18 @@ import { audit } from './audit.js';
  * Money in cents, percentages/multipliers in basis points.
  */
 export const SETTING_DEFAULTS = {
+  // The contracting entity. "Ridgeline Facilities" is a trading name of LHA Holdings Limited.
   company: {
     name: 'Ridgeline Facilities',
-    legal_name: 'Ridgeline Facilities Limited',
+    trading_name: 'Ridgeline Facilities',
+    legal_name: 'LHA Holdings Limited',
     gst_number: '',
-    nzbn: '',
+    nzbn: '9429052390173',
     address: '',
     email: 'accounts@ridgelinefacilities.com',
     phone: '',
     website: 'ridgelinefacilities.com',
-    bank_account_name: 'Ridgeline Facilities Limited',
+    bank_account_name: 'LHA Holdings Limited',
     bank_account_number: '',
   },
   gst_rate_bps: 1500,
@@ -29,6 +31,14 @@ export const SETTING_DEFAULTS = {
   balance_rounding_cents: 5000,
   assessment_markup_bps: 3500,
   emergency_cover_factor_bps: { none: 0, business_hours: 10000, '24x7': 15000 } as Record<string, number>,
+  // Portfolio scale taper: marginal share of monthly spend that needs prepaid coverage, by spend band (incl GST).
+  // Larger portfolios have smoother, more predictable spend, so each extra dollar needs less coverage.
+  assessment_scale_bands: [
+    { up_to_cents: 100000, coverage_bps: 10000 },
+    { up_to_cents: 300000, coverage_bps: 8500 },
+    { up_to_cents: 600000, coverage_bps: 7000 },
+    { up_to_cents: null, coverage_bps: 6000 },
+  ] as { up_to_cents: number | null; coverage_bps: number }[],
   // Booking eligibility
   booking_requires_minimum_balance: true,
   allow_emergency_below_minimum: true,
@@ -40,12 +50,35 @@ export const SETTING_DEFAULTS = {
   time_window_precedence: ['public_holiday', 'overnight', 'weekend', 'after_hours'],
   // Dispatch & SLA (minutes / hours)
   auto_dispatch: true,
-  offer_expiry_minutes: { routine: 240, urgent: 60, emergency: 15 } as Record<string, number>,
-  sla_hours: {
-    routine: { respond: 24, attend: 72 },
-    urgent: { respond: 4, attend: 24 },
-    emergency: { respond: 1, attend: 4 },
-  } as Record<string, { respond: number; attend: number }>,
+  offer_expiry_minutes: { emergency: 10, urgent: 60, standard: 240, scheduled: 720 } as Record<string, number>,
+  // Published SLA priority matrix (P1–P4). Business hours/days use sla_business_hours and exclude NZ public holidays.
+  sla_p1_onsite_hours: 2,
+  sla_p1_made_safe_hours: 4,
+  sla_p1_non_metro_onsite_hours: 4,
+  sla_p1_non_metro_made_safe_hours: 8,
+  sla_p2_onsite_business_hours: 8,
+  sla_p2_resolve_business_days: 2,
+  sla_p3_onsite_business_hours: 48,
+  sla_p3_resolve_business_days: 10,
+  sla_business_hours: { start: '08:00', end: '17:00', days: [1, 2, 3, 4, 5] },
+  sla_at_risk_bps: 7500,
+  metro_cities: ['Auckland', 'Wellington', 'Lower Hutt', 'Upper Hutt', 'Porirua', 'Christchurch', 'Hamilton', 'Tauranga', 'Dunedin'],
+  // SLA-ranked dispatch: offers go out in waves, best-placed contractors first.
+  dispatch_wave_size: { emergency: 0, urgent: 3, standard: 3, scheduled: 5 } as Record<string, number>,
+  dispatch_wave_minutes: { emergency: 5, urgent: 20, standard: 60, scheduled: 240 } as Record<string, number>,
+  travel_speed_kmh: 40,
+  unknown_travel_minutes: 45,
+  load_penalty_minutes: 30,
+  // Escalation when nobody has accepted within this many minutes of dispatch release.
+  escalation_minutes: { emergency: 10, urgent: 60, standard: 240, scheduled: 1440 } as Record<string, number>,
+  escalation_staff_phones: [] as string[],
+  // SMS
+  sms_offer_priorities: ['emergency', 'urgent'],
+  sms_offers_outside_business_hours: true,
+  // Monthly customer report (emailed on the 1st for the previous month)
+  monthly_report_enabled: true,
+  // Saved-card automatic top-ups
+  auto_topup_max_failures: 3,
   always_required_documents: ['public_liability'],
   late_cancellation_hours: 2,
   // Evidence
@@ -67,7 +100,7 @@ type Widen<T> = T extends readonly (infer U)[] ? Widen<U>[] : T extends string ?
 export type Settings = { [K in SettingKey]: Widen<(typeof SETTING_DEFAULTS)[K]> };
 
 export const SETTING_DESCRIPTIONS: Partial<Record<SettingKey, string>> = {
-  company: 'Company details printed on invoices and statements',
+  company: 'Contracting entity (legal name, NZBN, GST number) printed on invoices, credit notes, reports, agreements and emails',
   gst_rate_bps: 'GST rate in basis points (1500 = 15%)',
   ridgeline_gst_registered: 'Whether Ridgeline charges GST on customer invoices',
   min_balance_floor_cents: 'Lowest minimum prepaid balance for any account (cents)',
@@ -75,12 +108,30 @@ export const SETTING_DESCRIPTIONS: Partial<Record<SettingKey, string>> = {
   balance_rounding_cents: 'Recommended balances are rounded up to this increment (cents)',
   assessment_markup_bps: 'Markup applied to estimated contractor spend in assessments (bps)',
   emergency_cover_factor_bps: 'Multiplier on the emergency job share for each emergency cover level (bps)',
-  booking_requires_minimum_balance: 'Block routine/urgent bookings while the balance is below the agreed minimum',
+  booking_requires_minimum_balance: 'Hold P2–P4 bookings while the balance is below the agreed minimum',
   allow_emergency_below_minimum: 'Allow emergency jobs to be dispatched when funds are short (flagged for follow-up)',
   low_balance_alert_bps: 'Alert when balance falls below this share of the agreed minimum (10000 = 100%)',
   auto_dispatch: 'Automatically offer confirmed jobs to all eligible contractors',
   offer_expiry_minutes: 'Minutes before an unanswered job offer expires, by priority',
-  sla_hours: 'Respond and attend targets in hours, by priority',
+  sla_p1_onsite_hours: 'P1 Emergency (metro): on site within this many clock hours',
+  sla_p1_made_safe_hours: 'P1 Emergency (metro): made safe within this many clock hours',
+  sla_p1_non_metro_onsite_hours: 'P1 Emergency (non-metro site): on site within this many clock hours',
+  sla_p1_non_metro_made_safe_hours: 'P1 Emergency (non-metro site): made safe within this many clock hours',
+  sla_p2_onsite_business_hours: 'P2 Urgent: on site within this many NZ business hours',
+  sla_p2_resolve_business_days: 'P2 Urgent: resolved within this many NZ business days',
+  sla_p3_onsite_business_hours: 'P3 Standard: on site within this many NZ business hours',
+  sla_p3_resolve_business_days: 'P3 Standard: resolved within this many NZ business days',
+  sla_business_hours: 'NZ business hours used for SLA clocks (public holidays excluded)',
+  sla_at_risk_bps: 'Alert operations when this share of an SLA window has elapsed (bps)',
+  metro_cities: 'Site cities treated as metro for P1 targets (staff can override per site)',
+  dispatch_wave_size: 'Contractors offered per dispatch wave, best SLA fit first (0 = all who can meet the SLA)',
+  dispatch_wave_minutes: 'Minutes before the next dispatch wave is offered if nobody has accepted',
+  escalation_minutes: 'Escalate to staff (SMS + email) if no contractor accepts within this many minutes',
+  escalation_staff_phones: 'Staff mobile numbers (+64…) that receive escalation SMS',
+  sms_offer_priorities: 'Priorities whose job offers are also sent to contractors by SMS',
+  sms_offers_outside_business_hours: 'Also SMS every offer made outside business hours',
+  assessment_scale_bands: 'Share of monthly spend needing coverage, by spend band (falls as the portfolio grows)',
+  auto_topup_max_failures: 'Pause saved-card automatic top-ups after this many consecutive failures',
   labour_tolerance_bps: 'Labour may exceed recorded on-site time by this share before being flagged (bps)',
   authorised_overrun_bps: 'Contractor invoices may exceed the estimate by this share before being flagged (bps)',
   materials_receipt_threshold_cents: 'Materials lines above this amount need a receipt uploaded (cents)',

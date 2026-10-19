@@ -5,6 +5,8 @@ import { isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { audit } from './audit.js';
 import { hashPassword } from './customers.js';
+import { isNzMobile, normaliseNzPhone } from '../lib/phone.js';
+import { CONTRACTOR_AGREEMENT_VERSION } from './terms.js';
 
 export const DOCUMENT_TYPES: Record<string, string> = {
   public_liability: 'Public liability insurance',
@@ -30,6 +32,8 @@ export interface ContractorInput {
   businessAddress?: string;
   email: string;
   phone?: string;
+  /** Mobile for SMS dispatch; normalised to +64… */
+  mobilePhone?: string;
   gstRegistered: boolean;
   gstNumber?: string;
   bankAccountName?: string;
@@ -46,8 +50,16 @@ export interface ContractorInput {
 }
 
 /** Creates a contractor (status 'pending') and a login. Used by public applications and staff onboarding. */
-export async function createContractor(db: Db, actor: Actor, input: ContractorInput & { contactName: string; password: string; independentContractorAck?: boolean }) {
+function mobileOrNull(v: string | undefined | null): string | null {
+  if (!v?.trim()) return null;
+  const n = normaliseNzPhone(v);
+  if (!n || !isNzMobile(n)) throw new AppError('Enter a valid NZ mobile number for SMS dispatch (e.g. 021 555 0199)');
+  return n;
+}
+
+export async function createContractor(db: Db, actor: Actor, input: ContractorInput & { contactName: string; password: string; independentContractorAck?: boolean; agreementAccepted?: boolean }) {
   if (!input.legalName?.trim()) throw new AppError('Legal name is required');
+  const mobile = mobileOrNull(input.mobilePhone);
   if (input.gstRegistered && !input.gstNumber?.trim()) throw new AppError('GST number is required for GST-registered contractors');
   if (!input.serviceRegions?.length) throw new AppError('Select at least one service region');
   const hash = await hashPassword(input.password);
@@ -55,12 +67,14 @@ export async function createContractor(db: Db, actor: Actor, input: ContractorIn
     const contractor = await one(c,
       `INSERT INTO contractors (legal_name, trading_name, nzbn, business_address, email, phone, gst_registered, gst_number, bank_account_name,
          bank_account_number, payment_terms_days, service_regions, base_lat, base_lng, service_radius_km, after_hours_available,
-         emergency_available, max_concurrent_jobs, independent_contractor_ack_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18, CASE WHEN $19 THEN now() END) RETURNING *`,
+         emergency_available, max_concurrent_jobs, independent_contractor_ack_at, mobile_phone, agreement_version, agreement_accepted_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18, CASE WHEN $19 THEN now() END, $20,
+               CASE WHEN $21 THEN $22 END, CASE WHEN $21 THEN now() END) RETURNING *`,
       [input.legalName.trim(), input.tradingName || null, input.nzbn || null, input.businessAddress || null, input.email, input.phone || null,
        input.gstRegistered, input.gstRegistered ? input.gstNumber!.trim() : null, input.bankAccountName || null, input.bankAccountNumber || null,
        input.paymentTermsDays ?? 7, input.serviceRegions, input.baseLat ?? null, input.baseLng ?? null, input.serviceRadiusKm ?? null,
-       input.afterHoursAvailable ?? false, input.emergencyAvailable ?? false, input.maxConcurrentJobs ?? 5, input.independentContractorAck ?? false]);
+       input.afterHoursAvailable ?? false, input.emergencyAvailable ?? false, input.maxConcurrentJobs ?? 5, input.independentContractorAck ?? false,
+       mobile, input.agreementAccepted ?? false, CONTRACTOR_AGREEMENT_VERSION]);
     try {
       await c.query(`INSERT INTO users (email, password_hash, name, phone, role, contractor_id) VALUES ($1,$2,$3,$4,'contractor',$5)`,
         [input.email, hash, input.contactName, input.phone || null, contractor.id]);
@@ -80,7 +94,7 @@ export async function updateContractor(db: Db, actor: Actor, contractorId: strin
   assertContractorAccess(actor, contractorId);
   if (actor.role === 'contractor') {
     // Contractors may update availability and contact details only; commercial terms are staff-controlled.
-    const allowed = ['phone', 'available', 'afterHoursAvailable', 'emergencyAvailable', 'businessAddress', 'bankAccountName', 'bankAccountNumber'];
+    const allowed = ['phone', 'mobilePhone', 'available', 'afterHoursAvailable', 'emergencyAvailable', 'businessAddress', 'bankAccountName', 'bankAccountNumber'];
     for (const k of Object.keys(input)) if (!allowed.includes(k)) throw new ForbiddenError(`Contractors cannot change ${k}`);
   }
   if (input.status && !isStaff(actor)) throw new ForbiddenError();
@@ -97,12 +111,14 @@ export async function updateContractor(db: Db, actor: Actor, contractorId: strin
          payment_terms_days = COALESCE($11, payment_terms_days), service_regions = COALESCE($12, service_regions),
          service_radius_km = COALESCE($13, service_radius_km), after_hours_available = COALESCE($14, after_hours_available),
          emergency_available = COALESCE($15, emergency_available), max_concurrent_jobs = COALESCE($16, max_concurrent_jobs),
-         status = COALESCE($17, status), available = COALESCE($18, available), updated_at = now()
+         status = COALESCE($17, status), available = COALESCE($18, available),
+         mobile_phone = CASE WHEN $19::boolean THEN $20 ELSE mobile_phone END, updated_at = now()
        WHERE id = $1 RETURNING *`,
       [contractorId, input.legalName ?? null, input.tradingName ?? null, input.nzbn ?? null, input.businessAddress ?? null, input.phone ?? null,
        gstRegistered, gstRegistered ? gstNumber : null, input.bankAccountName ?? null, input.bankAccountNumber ?? null, input.paymentTermsDays ?? null,
        input.serviceRegions ?? null, input.serviceRadiusKm ?? null, input.afterHoursAvailable ?? null, input.emergencyAvailable ?? null,
-       input.maxConcurrentJobs ?? null, input.status ?? null, input.available ?? null]);
+       input.maxConcurrentJobs ?? null, input.status ?? null, input.available ?? null,
+       input.mobilePhone !== undefined, input.mobilePhone !== undefined ? mobileOrNull(input.mobilePhone) : null]);
     const changed: Record<string, unknown> = {};
     for (const k of Object.keys(after)) {
       if (k === 'updated_at') continue;

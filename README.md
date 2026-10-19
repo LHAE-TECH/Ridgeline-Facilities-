@@ -1,6 +1,6 @@
 # Ridgeline Facilities – Job Booking & Contractor Management System
 
-A production-ready operating system for **Ridgeline Facilities** (ridgelinefacilities.com): prepaid maintenance accounts, online job booking, contractor dispatch, photographic proof of work, contractor invoicing to Ridgeline, 35% markup customer invoicing, prepaid settlement and contractor payments, with one double-entry ledger underneath.
+A production-ready operating system for **Ridgeline Facilities** (ridgelinefacilities.com), a trading name of **LHA Holdings Limited** (NZBN 9429052390173): prepaid maintenance accounts, online job booking, contractor dispatch, photographic proof of work, contractor invoicing to Ridgeline, 35% markup customer invoicing, prepaid settlement and contractor payments, with one double-entry ledger underneath.
 
 | Document | Purpose |
 | --- | --- |
@@ -27,6 +27,10 @@ A production-ready operating system for **Ridgeline Facilities** (ridgelinefacil
 12. Issuing the invoice applies prepaid credit, books any remainder as a receivable, recognises revenue and GST, and emails the invoice, completion report and statement as PDFs.
 13. Contractor payables move through payment approval, adjustments (only with approval; deductions need the contractor's agreement), a batch with bank CSV export, and **confirmation with a bank reference and date**. Only then is anything marked paid. Bank statement CSVs can be reconciled automatically.
 14. The job closes only when evidence is approved, the contractor invoice is approved, the customer invoice is settled, the contractor payment is confirmed and no dispute is open.
+
+**Service levels.** Jobs are classified at intake into the published matrix (P1 Emergency: 2 h on site in metro areas, made safe in 4 h, 24/7, with configurable non-metro targets; P2 Urgent: 8 business hrs / 2 business days; P3 Standard: 48 business hrs / 10 business days; P4 Scheduled: agreed date). Each job runs an SLA clock against NZ business hours and holidays, with breach flagging. Dispatch offers jobs in waves ranked by SLA risk, with SMS offers, acceptance confirmations and escalation to on-call staff phones when nobody accepts (10 minutes for P1). SLA performance appears on the ops dashboard and in each customer's monthly report.
+
+**Automatic top-ups** charge a saved card off-session (Stripe) with explicit consent, crediting the balance only when Stripe confirms the payment.
 
 Exceptions are supported throughout: disputes (hold invoicing and payment, resolve with credit notes), rejected evidence, quotes and variations, billable late cancellations, emergency work, refunds, failed and reversed payments, and automatic top-ups with explicit consent.
 
@@ -61,7 +65,8 @@ Or with Docker: `docker compose up --build`, then `docker compose exec app node 
 
 ```bash
 createdb ridgeline_test
-npm test        # 70 tests: unit, service, HTTP and a Playwright end-to-end run (phone + desktop)
+npm test        # 109 tests: unit, service, HTTP and a Playwright end-to-end run (phone + desktop)
+STRIPE_TEST_SECRET_KEY=sk_test_... npx vitest run tests/stripe-live.test.ts   # real Stripe test mode (required before go-live)
 ```
 
 The test suite rebuilds the `ridgeline_test` schema from the migrations on each run. Each of the 18 acceptance criteria maps to named tests; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#acceptance-criteria--tests).
@@ -71,4 +76,5 @@ The test suite rebuilds the `ridgeline_test` schema from the migrations on each 
 - **Accounting and tax treatment** (prepaid balances held as customer advances with GST charged on the tax invoice when applied; contractor GST input claims; taxable supply information) is implemented conservatively and is configurable. **Confirm it with your accountant** before go-live.
 - **Default cost assumptions and pricing rules are starting points.** Review them in Admin → Settings. The default pricing applies a 35% markup to every category.
 - Customer pricing rules must be **disclosed in each customer's service agreement**. Draft rules have no effect until an administrator approves them.
-- The privacy statement and terms are placeholders for legal review.
+- The customer service agreement, contractor agreement and privacy statement name LHA Holdings Limited trading as Ridgeline Facilities. They are **drafts for legal review**.
+- Enter LHA Holdings Limited's **GST number** in Settings: GST invoices cannot be issued until it is set.

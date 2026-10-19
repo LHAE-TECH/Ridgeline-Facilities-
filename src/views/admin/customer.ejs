@@ -56,7 +56,7 @@
   </div>
 </div>
 <div class="card"><h2>Portfolio</h2><div class="table-wrap"><table><tr><th>Site</th><th>Facility</th><th>Type</th><th class="num">Units</th></tr>
-<% facilities.forEach(function (f) { const s = sites.find(function (x) { return x.id === f.site_id; }); %><tr><td><%= s ? s.name : '' %><br><small><%= s ? s.address + ', ' + s.region : '' %></small></td><td><%= f.name %></td><td><%= f.type_name %></td><td class="num"><%= f.unit_count %></td></tr><% }) %></table></div></div>
+<% facilities.forEach(function (f) { const s = sites.find(function (x) { return x.id === f.site_id; }); %><tr><td><%= s ? s.name : '' %><br><small><%= s ? s.address + ', ' + s.region : '' %> · <%= s && s.is_metro ? 'metro' : 'non-metro' %></small></td><td><%= f.name %></td><td><%= f.type_name %></td><td class="num"><%= f.unit_count %></td></tr><% }) %></table></div></div>
 <div class="grid-2">
   <div class="card"><h2>Jobs</h2><div class="table-wrap"><table><% jobs.forEach(function (j) { %><tr><td><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> <%= j.title %></td><td><%- include('../partials/status', { s: j.status }) %></td></tr><% }) %></table></div></div>
   <div class="card"><h2>Invoices</h2><div class="table-wrap"><table><% invoices.forEach(function (i) { %><tr><td><a href="/admin/customer-invoices/<%= i.id %>"><%= i.invoice_number || 'Draft' %></a></td><td class="num"><%= money(i.total_cents) %></td><td><%- include('../partials/status', { s: i.status }) %></td></tr><% }) %></table></div></div>
@@ -66,6 +66,8 @@
 <div class="grid-2">
   <div class="card"><h2>Payments</h2><% payments.forEach(function (p) { %><p class="mono"><%= p.reference %> · <%= humanize(p.method) %> · <%= money(p.amount_cents) %> · <%- include('../partials/status', { s: p.status }) %></p><% }) %></div>
   <div class="card"><h2>Contacts</h2><% users.forEach(function (u) { %><p><%= u.name %> · <%= u.email %> · <%= u.customer_role %><%= u.is_active ? '' : ' (inactive)' %></p><% }) %>
-  <% if (consent) { %><p class="notice ok">Automatic top-up consent: <%= money(consent.amount_cents) %> below <%= money(consent.trigger_below_cents) %> (since <%= date(consent.consented_at) %>)</p><% } %></div>
+  <p>Terms: <%= customer.terms_version ? 'accepted ' + customer.terms_version + ' on ' + date(customer.terms_accepted_at) : 'not recorded' %></p>
+  <p>Saved card: <%= card ? card.brand.toUpperCase() + ' ending ' + card.last4 : 'none' %></p>
+  <% if (consent) { %><p class="notice <%= consent.failure_count ? 'err' : 'ok' %>"><%= consent.payment_method_id ? 'Card auto top-up' : 'Auto top-up requests' %>: <%= consent.failure_count ? consent.failure_count + ' recent failure(s) – ' + consent.last_failure_reason + '. ' : '' %> <%= money(consent.amount_cents) %> below <%= money(consent.trigger_below_cents) %> (since <%= date(consent.consented_at) %>)</p><% } %></div>
 </div>
 <%- include('../partials/foot') %>

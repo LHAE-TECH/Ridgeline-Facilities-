@@ -30,7 +30,7 @@ See `.env.example` for the full list. Required in production:
 | `UPLOAD_DIR` | Persistent, **non-public** directory (default `/data/uploads` in Docker) |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | First administrator (12+ char password); used once by the seed command |
 
-Optional: `SMTP_*`, `EMAIL_FROM`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_*_ACCOUNT_CODE`, `XERO_SCOPES`, `S3_*`, `RUN_WORKER_IN_PROCESS`, `WORKER_INTERVAL_MS`.
+Optional: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` / `TWILIO_MESSAGING_SERVICE_SID`, `SMTP_*`, `EMAIL_FROM`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_*_ACCOUNT_CODE`, `XERO_SCOPES`, `S3_*`, `RUN_WORKER_IN_PROCESS`, `WORKER_INTERVAL_MS`.
 
 Keep all secrets in the host's secret manager, never in the repository.
 
@@ -39,7 +39,7 @@ Keep all secrets in the host's secret manager, never in the repository.
 1. Push this repository to GitHub. In Render: **New → Blueprint** → select the repo. Render creates the web service, database and disk from `render.yaml`.
 2. Fill the `sync: false` variables: `APP_BASE_URL`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, and email/Stripe/Xero credentials if you have them.
 3. Deploy. The container runs `node dist/migrate-cli.js` (idempotent) before starting the server.
-4. Open a Render shell and run `node dist/seed-cli.js` to create reference data and the first administrator. Then remove `SEED_ADMIN_PASSWORD` from the environment.
+4. Open a Render shell and run `node dist/seed-cli.js` to create reference data and the first administrator. In production this also marks the database as production, so demo data can never be loaded into it. Then remove `SEED_ADMIN_PASSWORD` from the environment.
 5. Add a custom domain (`app.ridgelinefacilities.com`) with a CNAME at your DNS provider. Render issues the TLS certificate.
 6. Add a link from the marketing site (ridgelinefacilities.com) to `/login` and `/register`.
 7. Sign in as the administrator and complete the go-live checklist below.
@@ -70,15 +70,18 @@ Deploy the new image. Migrations in `migrations/` are applied in order at start-
 
 ## Go-live checklist
 
-- [ ] Admin → Settings → **General → company**: legal name, GST number, NZBN, address, bank account (printed on invoices and statements).
+- [ ] Admin → Settings → **Contracting entity & GST**: confirm LHA Holdings Limited / NZBN 9429052390173 and **enter the GST number**. GST invoices are blocked until it is set. Also enter the address and the bank account for customer payments.
 - [ ] Confirm the GST rate and `ridgeline_gst_registered`.
 - [ ] Review the **facility assessment assumptions** and **coverage factors** against your real cost history.
 - [ ] Review the **pricing rules** (default 35% markup on every category, NZ$135 minimum job charge) and the reference contractor rates used for estimates. Make sure customer agreements disclose them.
-- [ ] Review the **public holidays** list and add regional anniversary days.
+- [ ] Review the **public holidays** list and add regional anniversary days (they affect business-hour SLA clocks).
+- [ ] Confirm the **SLA settings**: P1 non-metro targets (defaults 4 h on site / 8 h made safe are placeholders), `metro_cities`, `sla_business_hours`, escalation windows, and enter `escalation_staff_phones` (on-call mobiles).
+- [ ] Configure **Twilio**: set the status callback URL `https://<host>/webhooks/sms/twilio` (sent automatically per message), then send a test escalation by booking a test P1 job.
+- [ ] Make sure every emergency-capable contractor has a **mobile number**.
 - [ ] Create staff users with least privilege (ops / finance / admin).
 - [ ] Onboard contractors: verify trades, insurance and licences, agree rate cards, approve.
 - [ ] Configure SMTP and send yourself a test (Admin → Notifications shows real delivery status).
-- [ ] If using Stripe: set keys, add the webhook endpoint `https://<host>/webhooks/stripe` for `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed` and `checkout.session.expired`, and copy the signing secret into `STRIPE_WEBHOOK_SECRET`.
+- [ ] If using Stripe: set keys, add the webhook endpoint `https://<host>/webhooks/stripe` for `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `payment_intent.succeeded` and `payment_intent.payment_failed`, copy the signing secret into `STRIPE_WEBHOOK_SECRET`, and **run `tests/stripe-live.test.ts` with a test-mode key** (see INTEGRATIONS.md).
 - [ ] If using Xero: create a Custom Connection, set credentials and account codes, then re-queue skipped items in Admin → Integrations.
 - [ ] Schedule backups (BACKUP.md) and do a test restore.
 - [ ] Have your accountant confirm the prepaid / GST treatment, and your lawyer review the privacy statement and customer terms.

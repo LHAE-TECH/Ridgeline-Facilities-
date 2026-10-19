@@ -1,5 +1,5 @@
 <%- include('../partials/head', { title: job.ref }) %>
-<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><%= job.site_name %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <%= humanize(job.priority) %></small></div>
+<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><%= job.site_name %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <strong><%= prio(job.priority) %></strong></small></div>
 <div><%- include('../partials/status', { s: job.status }) %></div></div>
 <% if (job.hold_reason) { %><div class="notice"><%= job.hold_reason %></div><% } %>
 <% if (job.status === 'pending_funds') { %><div class="notice err">This job is on hold until your prepaid account meets its requirements. <a href="/app/account">Top up now</a>; it will be released automatically once funds are confirmed.</div><% } %>
@@ -14,6 +14,9 @@
     <dt>Site contact</dt><dd><%= job.site_contact_name || '—' %> <%= job.site_contact_phone || '' %></dd>
     <dt>Preferred window</dt><dd><%= dt(job.preferred_start) %> – <%= dt(job.preferred_end) %></dd>
     <dt>PO number</dt><dd><%= job.po_number || '—' %></dd>
+    <% if (job.sla_targets) { %><dt>Service level</dt><dd><%= job.sla_targets.onsite %> (by <%= dt(job.sla_onsite_due) %>)<br><%= job.sla_targets.resolve %> (by <%= dt(job.sla_resolve_due) %>)
+      <% if (job.sla_onsite_met === false || job.sla_resolve_met === false) { %><br><span class="badge err">Target missed</span><% } else if (job.sla_onsite_met) { %><br><span class="badge ok">On-site target met</span><% } %></dd><% } %>
+    <% if (job.made_safe_at) { %><dt>Made safe</dt><dd><%= dt(job.made_safe_at) %></dd><% } %>
     <dt>Estimate</dt><dd><%= money(job.estimate_total_cents) %> incl GST <small>(estimate only)</small></dd>
     <dt>Contractor</dt><dd><%= job.contractor_trading_name || job.contractor_legal_name || 'Not yet assigned' %></dd>
     <dt>Arrived</dt><dd><%= dt(job.arrived_at) %></dd><dt>Completed</dt><dd><%= dt(job.completed_at) %></dd>

@@ -1,13 +1,14 @@
 <%- include('../partials/head', { title: 'Jobs' }) %>
 <div class="page-head"><div><h1>Jobs</h1><small><%= contractor.legal_name %> · <%- include('../partials/status', { s: contractor.status }) %> · <%= contractor.available ? 'Available' : 'Unavailable' %></small></div></div>
+<% if (!contractor.mobile_phone) { %><div class="notice">Add your mobile number on the <a href="/c/profile">Profile</a> page to receive urgent job offers by SMS. Emergency (P1) jobs are only offered to contractors with a mobile number.</div><% } %>
 <% if (contractor.status !== 'approved') { %><div class="notice">Your account is <%= contractor.status %>. Upload your insurance and licences on the <a href="/c/profile">Profile</a> page; Ridgeline will verify them and agree rates before offering jobs.</div><% } %>
 <% expiring.forEach(function (d) { %><div class="notice err"><%= humanize(d.doc_type) %> expires <%= date(d.expires_at) %>. <a href="/c/profile">Upload the renewal</a> to keep receiving jobs.</div><% }) %>
 <div class="card"><h2>Job offers (<%= offers.length %>)</h2>
 <% if (!offers.length) { %><p class="muted">No open offers right now.</p><% } %>
 <% offers.forEach(function (o) { %>
   <div class="job-card <%= o.priority %>">
-    <strong><%= o.ref %>: <%= o.title %></strong> <span class="badge <%= o.priority === 'emergency' ? 'err' : o.priority === 'urgent' ? 'warn' : '' %>"><%= humanize(o.priority) %></span><br>
-    <small><%= o.trade_name %> · <%= [o.suburb, o.city, o.region].filter(Boolean).join(', ') %> · preferred <%= dt(o.preferred_start) %> · offer expires <%= dt(o.expires_at) %></small>
+    <strong><%= o.ref %>: <%= o.title %></strong> <span class="badge <%= o.priority === 'emergency' ? 'err' : o.priority === 'urgent' ? 'warn' : '' %>"><%= prio(o.priority) %></span><br>
+    <small><%= o.trade_name %> · <%= [o.suburb, o.city, o.region].filter(Boolean).join(', ') %><% if (o.sla_onsite_due) { %> · <strong>on site by <%= dt(o.sla_onsite_due) %></strong><% } %> · offer expires <%= dt(o.expires_at) %></small>
     <p><%= o.description %></p>
     <div class="actions">
       <form method="post" action="/c/offers/<%= o.id %>/accept"><%- include('../partials/csrf') %><button type="submit">Accept job</button></form>

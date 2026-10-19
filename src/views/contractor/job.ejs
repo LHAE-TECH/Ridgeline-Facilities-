@@ -1,5 +1,5 @@
 <%- include('../partials/head', { title: job.ref }) %>
-<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><%= job.trade_name %> · <%= humanize(job.priority) %></small></div><div><%- include('../partials/status', { s: job.status }) %></div></div>
+<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><%= job.trade_name %> · <strong><%= prio(job.priority) %></strong></small></div><div><%- include('../partials/status', { s: job.status }) %></div></div>
 <% if (offer) { %>
   <div class="notice">Offered to you until <%= dt(offer.expires_at) %>.
     <form method="post" action="/c/offers/<%= offer.id %>/accept" class="inline-form"><%- include('../partials/csrf') %><button type="submit">Accept job</button></form></div>
@@ -13,6 +13,7 @@
     <dt>Hazards</dt><dd><%= job.site_hazards || 'None recorded. Complete your own site risk assessment.' %></dd><% } %>
     <dt>Description</dt><dd><%= job.description %></dd>
     <dt>Preferred</dt><dd><%= dt(job.preferred_start) %> – <%= dt(job.preferred_end) %></dd>
+    <% if (job.sla_targets) { %><dt>SLA</dt><dd><%= job.sla_targets.onsite %>: <strong><%= dt(job.sla_onsite_due) %></strong><br><%= job.sla_targets.resolve %>: <strong><%= dt(job.sla_resolve_due) %></strong></dd><% } %>
     <% if (job.requires_quote) { %><dt>Quote</dt><dd>Required before work starts</dd><% } %>
   </dl></div>
   <% if (assigned) { %>
@@ -20,6 +21,12 @@
     <p class="field-hint">Times are recorded by Ridgeline's server when you tap the button. Your location is captured only if your device allows it.</p>
     <% if (job.status === 'assigned') { %><form method="post" action="/c/jobs/<%= job.id %>/arrive" data-geo><%- include('../partials/csrf') %><button type="submit">I've arrived on site</button></form><% } %>
     <% if (job.status === 'on_site') { %><form method="post" action="/c/jobs/<%= job.id %>/start" data-geo><%- include('../partials/csrf') %><button type="submit">Start work</button></form><% } %>
+    <% if (job.priority === 'emergency' && ['on_site','in_progress'].includes(job.status)) { %>
+      <% if (job.made_safe_at) { %><p class="notice ok">Made safe at <%= dt(job.made_safe_at) %></p><% } else { %>
+      <form method="post" action="/c/jobs/<%= job.id %>/made-safe" class="stack" data-geo style="margin-top:.75rem"><%- include('../partials/csrf') %>
+        <label>P1: confirm the site is made safe</label><input name="note" required placeholder="e.g. Water isolated at toby, power off to affected circuit">
+        <button type="submit" class="danger">Site is made safe</button></form><% } %>
+    <% } %>
   </div>
   <% } %>
 </div>
@@ -69,7 +76,7 @@
   <% const liveInvoice = invoices.find(function (i) { return ['submitted','flagged','approved'].includes(i.status); }); %>
   <% if (!liveInvoice && (['evidence_submitted','evidence_approved'].includes(job.status) || (job.status === 'cancelled' && job.cancellation_billable))) { %>
   <div class="card"><h2>Invoice Ridgeline Facilities</h2>
-    <p class="field-hint">Invoice <strong>Ridgeline Facilities</strong>, not the customer. Charges must match your agreed rate card<% if (rateCard) { %> (labour <%= money(rateCard.labour_rate_cents) %>/h, callout <%= money(rateCard.callout_cents) %>, emergency callout <%= money(rateCard.emergency_callout_cents) %>, after-hours ×<%= rateCard.after_hours_multiplier_bps / 10000 %>)<% } %>. <%= contractor.gst_registered ? 'GST at 15% is added automatically (GST ' + contractor.gst_number + ').' : 'You are not GST-registered, so no GST is charged.' %></p>
+    <p class="field-hint">Address your invoice to <strong><%= company.legal_name %> trading as <%= company.trading_name %></strong> (NZBN <%= company.nzbn %>), not the customer. Charges must match your agreed rate card<% if (rateCard) { %> (labour <%= money(rateCard.labour_rate_cents) %>/h, callout <%= money(rateCard.callout_cents) %>, emergency callout <%= money(rateCard.emergency_callout_cents) %>, after-hours ×<%= rateCard.after_hours_multiplier_bps / 10000 %>)<% } %>. <%= contractor.gst_registered ? 'GST at 15% is added automatically (GST ' + contractor.gst_number + ').' : 'You are not GST-registered, so no GST is charged.' %></p>
     <form method="post" action="/c/jobs/<%= job.id %>/invoice" enctype="multipart/form-data" class="stack"><%- include('../partials/csrf') %><input type="hidden" name="key" value="<%= key %>">
       <div class="grid-3"><div><label>Your invoice number</label><input name="invoice_number" required></div><div><label>Invoice date</label><input name="invoice_date" type="date" required value="<%= new Date().toISOString().slice(0,10) %>"></div>
       <div><label>Invoice total incl GST (check)</label><input name="total" inputmode="decimal" placeholder="Leave blank to calculate"></div></div>

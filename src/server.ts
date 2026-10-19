@@ -1,7 +1,12 @@
 import { createApp } from './app.js';
 import { config, integrationStatus } from './config.js';
+import { pool } from './db.js';
+import { markProductionDatabase } from './demo.js';
 import { startWorker } from './worker.js';
 
+if (config.isProduction) {
+  markProductionDatabase(pool).catch((err) => console.error('Could not mark database as production', err));
+}
 const app = createApp();
 app.listen(config.port, () => {
   console.log(`Ridgeline Facilities listening on port ${config.port} (${config.env})`);

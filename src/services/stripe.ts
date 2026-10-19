@@ -16,10 +16,15 @@ let client: Stripe | null = null;
 export function stripeEnabled(): boolean {
   return Boolean(config.stripe.secretKey && config.stripe.webhookSecret);
 }
-function stripe(): Stripe {
-  if (!client) client = new Stripe(config.stripe.secretKey || 'sk_test_unconfigured');
+export function stripeClient(): Stripe {
+  if (!client) client = new Stripe(config.stripe.secretKey || 'sk_test_unconfigured', { maxNetworkRetries: 2 });
   return client;
 }
+/** Used after changing keys at runtime (tests). */
+export function resetStripeClient(): void { client = null; }
+/** Unit tests substitute a minimal fake; the live test-mode suite uses the real client. */
+export function setStripeClientForTests(fake: unknown): void { client = fake as Stripe; }
+const stripe = stripeClient;
 
 export async function createCheckout(db: Db, actor: Actor, input: { customerId: string; amountCents: number; customerInvoiceId?: string | null; idempotencyKey: string }) {
   if (!stripeEnabled()) throw new AppError('Card payments are not configured; please pay by bank transfer', 409);
@@ -57,18 +62,35 @@ export async function handleStripeEvent(db: Db, event: Stripe.Event): Promise<st
       [event.id, event.type, JSON.stringify(event)]);
     if (!inserted) return 'duplicate';
     let result = 'ignored';
-    const session = event.data.object as Stripe.Checkout.Session;
-    const paymentId = session?.metadata?.payment_id ?? session?.client_reference_id;
-    if (paymentId && (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded')) {
-      if (session.payment_status === 'paid') {
-        const r = await confirmPayment(c, SYSTEM_ACTOR, paymentId, { providerPaymentId: String(session.payment_intent ?? session.id) });
-        result = r.credited ? 'credited' : 'already_credited';
+    if (event.type.startsWith('checkout.session.')) {
+      const session = event.data.object as Stripe.Checkout.Session;
+      if (session.mode === 'setup') {
+        if (event.type === 'checkout.session.completed' && session.setup_intent) {
+          const { recordSetupIntent } = await import('./autoTopUp.js');
+          await recordSetupIntent(c, SYSTEM_ACTOR, String(typeof session.setup_intent === 'string' ? session.setup_intent : session.setup_intent.id));
+          result = 'card_saved';
+        }
       } else {
-        result = 'awaiting_async_payment';
+        const paymentId = session?.metadata?.payment_id ?? session?.client_reference_id;
+        if (paymentId && (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded')) {
+          if (session.payment_status === 'paid') {
+            const r = await confirmPayment(c, SYSTEM_ACTOR, paymentId, { providerPaymentId: String(session.payment_intent ?? session.id) });
+            result = r.credited ? 'credited' : 'already_credited';
+          } else {
+            result = 'awaiting_async_payment';
+          }
+        } else if (paymentId && (event.type === 'checkout.session.async_payment_failed' || event.type === 'checkout.session.expired')) {
+          await failPayment(c, SYSTEM_ACTOR, paymentId, event.type === 'checkout.session.expired' ? 'Checkout expired' : 'Card payment failed');
+          result = 'failed';
+        }
       }
-    } else if (paymentId && (event.type === 'checkout.session.async_payment_failed' || event.type === 'checkout.session.expired')) {
-      await failPayment(c, SYSTEM_ACTOR, paymentId, event.type === 'checkout.session.expired' ? 'Checkout expired' : 'Card payment failed');
-      result = 'failed';
+    } else if (event.type === 'payment_intent.succeeded' || event.type === 'payment_intent.payment_failed') {
+      // Off-session automatic top-up charges (Checkout payments are handled via the session events above).
+      const pi = event.data.object as Stripe.PaymentIntent;
+      if (pi.metadata?.purpose === 'auto_topup' && pi.metadata.payment_id) {
+        const { settleAutoTopUpIntent } = await import('./autoTopUp.js');
+        result = await settleAutoTopUpIntent(c, pi);
+      }
     }
     await c.query(`UPDATE webhook_events SET processed_at = now(), result = $2 WHERE provider = 'stripe' AND event_id = $1`, [event.id, result]);
     return result;

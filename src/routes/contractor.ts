@@ -6,7 +6,7 @@ import { getContractorInvoiceForActor, submitContractorInvoice } from '../servic
 import { addComplianceDocument, contractorProfile, currentRateCard, DOCUMENT_TYPES, updateContractor } from '../services/contractors.js';
 import { raiseDispute } from '../services/disputes.js';
 import { acceptOffer, declineOffer } from '../services/dispatch.js';
-import { addEvidence, completeJob, evidenceStatus, recordArrival, startWork, submitQuote, type EvidenceKind } from '../services/evidence.js';
+import { addEvidence, completeJob, evidenceStatus, markMadeSafe, recordArrival, startWork, submitQuote, type EvidenceKind } from '../services/evidence.js';
 import { getJobForActor } from '../services/jobs.js';
 import { payableAmount } from '../services/payables.js';
 import { COST_CATEGORIES } from '../services/pricing.js';
@@ -23,9 +23,9 @@ const kid = (req: any): string => actor(req).contractorId!;
 contractorRouter.get('/', async (req, res) => {
   const contractorId = kid(req);
   const offers = await query(pool,
-    `SELECT o.*, j.ref, j.title, j.priority, j.preferred_start, j.description, s.suburb, s.city, s.region, t.name AS trade_name
+    `SELECT o.*, j.ref, j.title, j.priority, j.preferred_start, j.description, j.sla_onsite_due, s.suburb, s.city, s.region, t.name AS trade_name
        FROM job_offers o JOIN jobs j ON j.id = o.job_id JOIN sites s ON s.id = j.site_id JOIN trades t ON t.id = j.trade_id
-      WHERE o.contractor_id = $1 AND o.status = 'offered' AND o.expires_at > now() ORDER BY j.priority = 'emergency' DESC, o.expires_at`, [contractorId]);
+      WHERE o.contractor_id = $1 AND o.status = 'offered' AND o.expires_at > now() ORDER BY j.sla_onsite_due NULLS LAST, o.expires_at`, [contractorId]);
   const jobs = await query(pool,
     `SELECT j.*, s.name AS site_name, s.address AS site_address FROM jobs j JOIN sites s ON s.id = j.site_id
       WHERE j.assigned_contractor_id = $1 AND j.status NOT IN ('closed') AND (j.status <> 'cancelled' OR j.cancellation_billable)
@@ -65,6 +65,11 @@ contractorRouter.get('/jobs/:id', async (req, res) => {
 contractorRouter.post('/jobs/:id/arrive', action(async (req) => {
   await recordArrival(pool, actor(req), pid(req), geo(req.body));
   return { redirect: `/c/jobs/${pid(req)}`, message: 'Arrival recorded' };
+}));
+
+contractorRouter.post('/jobs/:id/made-safe', action(async (req) => {
+  await markMadeSafe(pool, actor(req), pid(req), str(req.body.note), geo(req.body));
+  return { redirect: `/c/jobs/${pid(req)}`, message: 'Recorded: site made safe' };
 }));
 
 contractorRouter.post('/jobs/:id/start', action(async (req) => {
@@ -155,7 +160,7 @@ contractorRouter.get('/profile', async (req, res) => {
 
 contractorRouter.post('/profile', action(async (req) => {
   await updateContractor(pool, actor(req), kid(req), { available: bool(req.body.available), afterHoursAvailable: bool(req.body.after_hours), emergencyAvailable: bool(req.body.emergency),
-    phone: optStr(req.body.phone), bankAccountName: optStr(req.body.bank_account_name), bankAccountNumber: optStr(req.body.bank_account_number) });
+    phone: optStr(req.body.phone), mobilePhone: str(req.body.mobile_phone), bankAccountName: optStr(req.body.bank_account_name), bankAccountNumber: optStr(req.body.bank_account_number) });
   return { redirect: '/c/profile', message: 'Profile updated' };
 }));
 

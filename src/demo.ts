@@ -15,6 +15,7 @@ export const DEMO_PASSWORD = 'demo-password-123';
  * prepaid account, and an approved general-maintenance contractor. Never run against production.
  */
 export async function seedDemo(db: Db) {
+  await assertDemoSeedAllowed(db);
   const existing = await maybeOne(db, `SELECT id FROM users WHERE email = 'ops@demo.ridgeline.test'`);
   if (existing) return demoLogins();
   const hash = await bcrypt.hash(DEMO_PASSWORD, 10);
@@ -25,6 +26,9 @@ export async function seedDemo(db: Db) {
     staffIds[role] = u.id;
   }
   const admin: Actor = { id: staffIds.admin, role: 'admin', name: 'Demo admin' };
+  // Demo-only GST number so invoices can be issued in the demo; Ridgeline enters the real one in Settings.
+  const { SETTING_DEFAULTS } = await import('./services/settings.js');
+  await db.query(`INSERT INTO settings (key, value) VALUES ('company', $1) ON CONFLICT (key) DO NOTHING`, [JSON.stringify({ ...SETTING_DEFAULTS.company, gst_number: '000-000-000' })]);
   const finance: Actor = { id: staffIds.finance, role: 'finance', name: 'Demo finance' };
 
   const { customer, user } = await registerCustomer(db, SYSTEM_ACTOR, {
@@ -44,7 +48,7 @@ export async function seedDemo(db: Db) {
     receivedDate: new Date().toISOString().slice(0, 10), bankReference: 'DEMO DEPOSIT', idempotencyKey: 'demo-deposit' });
 
   const contractor = await createContractor(db, admin, {
-    legalName: 'Kiwi Fix-It Services Limited', tradingName: 'Kiwi Fix-It', email: 'contractor@demo.ridgeline.test', phone: '021 555 0199', gstRegistered: true,
+    legalName: 'Kiwi Fix-It Services Limited', tradingName: 'Kiwi Fix-It', email: 'contractor@demo.ridgeline.test', phone: '09 555 0199', mobilePhone: '021 555 0199', gstRegistered: true,
     gstNumber: '123-456-789', bankAccountName: 'Kiwi Fix-It Services', bankAccountNumber: '12-3456-7890123-00', serviceRegions: ['Auckland'],
     afterHoursAvailable: true, emergencyAvailable: true, contactName: 'Kiri Fixit', password: DEMO_PASSWORD, independentContractorAck: true,
   });
@@ -60,6 +64,30 @@ export async function seedDemo(db: Db) {
   }
   await db.query(`UPDATE contractors SET status = 'approved' WHERE id = $1`, [contractor.id]);
   return demoLogins();
+}
+
+export const DEMO_EMAIL_DOMAIN = '@demo.ridgeline.test';
+
+/**
+ * Demo data must never reach a real database. Refuses when:
+ *  - NODE_ENV is production;
+ *  - the database has been marked as production (a production server marks it on start-up);
+ *  - the database contains any user or customer that is not demo data.
+ */
+export async function assertDemoSeedAllowed(db: Db): Promise<void> {
+  if (process.env.NODE_ENV === 'production') throw new Error('Refusing to load demo data: NODE_ENV=production');
+  const marker = await maybeOne(db, `SELECT value FROM settings WHERE key = 'deployment_environment'`);
+  if (marker?.value === 'production') throw new Error('Refusing to load demo data: this database is marked as a production database');
+  const real = await maybeOne(db,
+    `SELECT (SELECT COUNT(*) FROM users WHERE email NOT LIKE '%' || $1)::int + (SELECT COUNT(*) FROM customers WHERE billing_email NOT LIKE '%.demo' AND billing_email NOT LIKE '%' || $1)::int AS n`,
+    [DEMO_EMAIL_DOMAIN]);
+  if (real && real.n > 0) throw new Error(`Refusing to load demo data: the database already contains ${real.n} non-demo user/customer record(s)`);
+}
+
+/** Called by the production server on start-up so demo seeding is permanently refused for this database. */
+export async function markProductionDatabase(db: Db): Promise<void> {
+  await db.query(`INSERT INTO settings (key, value, description) VALUES ('deployment_environment', '"production"', 'Set automatically by a production server; blocks demo data')
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
 }
 
 export function demoLogins() {

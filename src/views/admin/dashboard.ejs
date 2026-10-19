@@ -20,9 +20,17 @@
   <div class="stat"><div class="label">Awaiting dispatch</div><div class="value"><a href="/admin/dispatch"><%= d.jobs.awaitingDispatch %></a></div></div>
   <div class="stat"><div class="label">In progress</div><div class="value"><%= d.jobs.inProgress %></div></div>
   <div class="stat"><div class="label">Awaiting evidence review</div><div class="value"><a href="/admin/jobs?status=evidence_submitted"><%= d.jobs.awaitingEvidence %></a></div></div>
-  <div class="stat <%= d.overdue.length ? 'alert' : '' %>"><div class="label">Overdue jobs</div><div class="value"><%= d.overdue.length %></div></div>
+  <div class="stat <%= d.overdue.length ? 'alert' : '' %>"><div class="label">SLA at risk / breached now</div><div class="value"><%= d.overdue.length %></div><div class="sub"><%= d.slaBreaches.breached %> breached · <%= d.slaBreaches.escalated %> escalated in period</div></div>
   <div class="stat <%= d.disputes ? 'alert' : '' %>"><div class="label">Open disputes</div><div class="value"><a href="/admin/disputes"><%= d.disputes %></a></div></div>
 </div>
+
+<h2>SLA performance (clock started in period)</h2>
+<div class="card"><div class="table-wrap"><table><tr><th>Priority</th><th class="num">Jobs</th><th class="num">On site in target</th><th class="num">Resolved / made safe in target</th><th class="num">Avg time to site</th></tr>
+<% d.sla.forEach(function (r) { %><tr><td><%= r.code %> <%= r.label %></td><td class="num"><%= r.jobs %></td>
+  <td class="num"><% if (r.onsitePct === null) { %>—<% } else { %><span class="badge <%= r.onsitePct >= 95 ? 'ok' : r.onsitePct >= 85 ? 'warn' : 'err' %>"><%= r.onsitePct %>%</span> <small><%= r.onsiteMet %>/<%= r.onsiteMeasured %></small><% } %></td>
+  <td class="num"><% if (r.resolvePct === null) { %>—<% } else { %><span class="badge <%= r.resolvePct >= 95 ? 'ok' : r.resolvePct >= 85 ? 'warn' : 'err' %>"><%= r.resolvePct %>%</span> <small><%= r.resolveMet %>/<%= r.resolveMeasured %></small><% } %></td>
+  <td class="num"><%= r.avgMinutesToSite === null ? '—' : Math.floor(r.avgMinutesToSite / 60) + 'h ' + (r.avgMinutesToSite % 60) + 'm' %></td></tr><% }) %></table></div>
+<p class="field-hint">A target is counted once the visit/resolution happens or its due time passes. Cancelled jobs are excluded.</p></div>
 
 <h2>Invoicing &amp; payments</h2>
 <div class="stats">
@@ -58,7 +66,7 @@
 </div>
 <div class="grid-2">
   <div class="card"><h2>Low-balance accounts</h2><% d.lowBalance.forEach(function (c) { %><p><a href="/admin/customers/<%= c.id %>"><%= c.name %></a> · <%= money(c.prepaid_balance_cents) %> of <%= money(c.agreed_minimum_balance_cents) %></p><% }) %><% if (!d.lowBalance.length) { %><p class="muted">None</p><% } %></div>
-  <div class="card"><h2>Overdue jobs</h2><% d.overdue.forEach(function (j) { %><p><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> · <%= humanize(j.priority) %> · <%= statusLabel(j.status) %></p><% }) %><% if (!d.overdue.length) { %><p class="muted">None</p><% } %></div>
+  <div class="card"><h2>SLA at risk or breached</h2><% d.overdue.forEach(function (j) { %><p><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> · <%= prio(j.priority) %> · <%= statusLabel(j.status) %> · <span class="badge <%= j.current.state === 'breached' ? 'err' : 'warn' %>"><%= slaBadge(j.current) %></span></p><% }) %><% if (!d.overdue.length) { %><p class="muted">None</p><% } %></div>
   <div class="card"><h2>Compliance expiring (30 days)</h2><% d.compliance.forEach(function (c) { %><p><a href="/admin/contractors/<%= c.contractor_id %>"><%= c.legal_name %></a> · <%= humanize(c.doc_type) %> · <%= date(c.expires_at) %></p><% }) %><% if (!d.compliance.length) { %><p class="muted">None</p><% } %></div>
   <div class="card"><h2>Failures needing attention</h2><dl class="kv">
     <dt>Failed / reversed customer payments (30 d)</dt><dd><%= d.failures.failed_payments %></dd><dt>Pending customer payments</dt><dd><a href="/admin/payments"><%= d.failures.pending_payments %></a></dd>

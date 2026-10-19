@@ -10,6 +10,8 @@ import { addEvidence, completeJob, recordArrival, reviewEvidence, startWork } fr
 import { type BookingInput, createBooking } from '../src/services/jobs.js';
 import { recordBankReceipt } from '../src/services/payments.js';
 import { setEmailTransport } from '../src/services/notifications.js';
+import { setSmsTransport } from '../src/services/sms.js';
+import { SETTING_DEFAULTS } from '../src/services/settings.js';
 import { NZ_HOLIDAYS, seedReferenceData } from '../src/seed.js';
 
 export const db = pool;
@@ -28,7 +30,10 @@ export async function resetDb(): Promise<void> {
   await db.query(`TRUNCATE ${TRANSACTIONAL_TABLES.join(', ')} RESTART IDENTITY CASCADE`);
   // CASCADE also empties pricing_rules (FK to users); restore the default reference data.
   await seedReferenceData(db);
+  // Tax invoices require the entity's GST number (blank by default until Ridgeline enters it).
+  await db.query(`INSERT INTO settings (key, value) VALUES ('company', $1)`, [JSON.stringify({ ...SETTING_DEFAULTS.company, gst_number: '123-456-789' })]);
   setEmailTransport(undefined);
+  setSmsTransport(undefined);
 }
 
 let counter = 0;
@@ -84,12 +89,12 @@ export interface ContractorFixture { contractorId: string; actor: Actor }
 
 /** Approved, compliant contractor with a verified trade and agreed rate card. */
 export async function approvedContractor(opts: { trade?: string; regions?: string[]; gstRegistered?: boolean; labourRate?: number; callout?: number;
-  emergencyCallout?: number; emergency?: boolean; afterHours?: boolean } = {}): Promise<ContractorFixture> {
+  emergencyCallout?: number; emergency?: boolean; afterHours?: boolean; mobile?: string | null; lat?: number; lng?: number } = {}): Promise<ContractorFixture> {
   const admin = await staff('admin');
   const email = `contractor-${uniq()}@trade.test`;
   const gst = opts.gstRegistered ?? true;
   const c = await createContractor(db, admin, {
-    legalName: `Trade Co ${uniq()} Ltd`, email, gstRegistered: gst, gstNumber: gst ? '123-456-789' : undefined, serviceRegions: opts.regions ?? ['Auckland'],
+    legalName: `Trade Co ${uniq()} Ltd`, email, mobilePhone: opts.mobile === undefined ? '021 555 0100' : opts.mobile ?? undefined, gstRegistered: gst, gstNumber: gst ? '123-456-789' : undefined, serviceRegions: opts.regions ?? ['Auckland'],
     contactName: 'Tom Trades', password: 'correct-horse-battery', bankAccountNumber: '12-3456-7890123-00', bankAccountName: 'Trade Co',
     emergencyAvailable: opts.emergency ?? true, afterHoursAvailable: opts.afterHours ?? true,
   });
@@ -102,7 +107,7 @@ export async function approvedContractor(opts: { trade?: string; regions?: strin
   }
   await setRateCard(db, admin, c.id, { tradeId: tid, labourRateCents: opts.labourRate ?? 8000, calloutCents: opts.callout ?? 10000,
     emergencyCalloutCents: opts.emergencyCallout ?? 15000, travelPerKmCents: 120, minChargeCents: 10000, cancellationFeeCents: 8000 });
-  await db.query(`UPDATE contractors SET status = 'approved' WHERE id = $1`, [c.id]);
+  await db.query(`UPDATE contractors SET status = 'approved', base_lat = $2, base_lng = $3 WHERE id = $1`, [c.id, opts.lat ?? null, opts.lng ?? null]);
   const user = await one(db, 'SELECT id FROM users WHERE contractor_id = $1', [c.id]);
   return { contractorId: c.id, actor: { id: user.id, role: 'contractor', name: 'Tom Trades', email, contractorId: c.id } };
 }
@@ -124,7 +129,7 @@ export function standardHoursSlot(): string {
 
 export async function book(fx: CustomerFixture, overrides: Partial<BookingInput> = {}) {
   return createBooking(db, fx.owner, {
-    customerId: fx.customerId, siteId: fx.siteId, tradeId: await tradeId('general'), priority: 'routine',
+    customerId: fx.customerId, siteId: fx.siteId, tradeId: await tradeId('general'), priority: 'standard',
     title: 'Leaking tap', description: 'Kitchen tap leaking', preferredStart: standardHoursSlot(), ...overrides,
   });
 }
@@ -149,4 +154,15 @@ export async function completeAndApprove(jobId: string, contractor: ContractorFi
 
 export async function count(sql: string, params: unknown[] = []): Promise<number> {
   return Number((await query(db, sql, params))[0]?.n ?? 0);
+}
+
+/** Extracts the visible text of an uncompressed pdfkit PDF (hex-encoded TJ strings). */
+export function pdfText(buf: Buffer): string {
+  const src = buf.toString('latin1');
+  let out = '';
+  for (const block of src.match(/\[([^\]]*)\]\s*TJ/g) ?? []) {
+    for (const hex of block.match(/<([0-9a-fA-F]+)>/g) ?? []) out += Buffer.from(hex.slice(1, -1), 'hex').toString('latin1');
+    out += ' ';
+  }
+  return out.replace(/\s+/g, ' ');
 }

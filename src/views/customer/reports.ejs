@@ -1,0 +1,11 @@
+<%- include('../partials/head', { title: 'Monthly reports' }) %>
+<div class="page-head"><div><h1>Monthly reports</h1><small>Jobs, service-level performance and your prepaid account, by month</small></div>
+<form class="inline-form" method="get"><select name="month"><% months.forEach(function (m) { %><option value="<%= m %>" <%= m === month ? 'selected' : '' %>><%= m %></option><% }) %></select><button class="secondary" type="submit">Show</button></form></div>
+<div class="card"><div class="page-head"><h2>Service levels – <%= month %></h2><a class="btn secondary small" href="/app/reports/<%= month %>.pdf">Download report (PDF)</a></div>
+<div class="table-wrap"><table><tr><th>Priority</th><th class="num">Jobs</th><th class="num">On site in target</th><th class="num">Resolved in target</th><th class="num">Avg time to site</th></tr>
+<% sla.forEach(function (r) { %><tr><td><%= r.code %> <%= r.label %></td><td class="num"><%= r.jobs %></td>
+<td class="num"><%= r.onsitePct === null ? '—' : r.onsiteMet + '/' + r.onsiteMeasured + ' (' + r.onsitePct + '%)' %></td>
+<td class="num"><%= r.resolvePct === null ? '—' : r.resolveMet + '/' + r.resolveMeasured + ' (' + r.resolvePct + '%)' %></td>
+<td class="num"><%= r.avgMinutesToSite === null ? '—' : Math.floor(r.avgMinutesToSite / 60) + 'h ' + (r.avgMinutesToSite % 60) + 'm' %></td></tr><% }) %></table></div>
+<p class="field-hint">Targets: P1 Emergency on site 2 hrs (metro) and made safe 4 hrs, 24/7; P2 Urgent on site 8 business hrs and resolved 2 business days; P3 Standard on site 48 business hrs and resolved 10 business days; P4 Scheduled on the agreed date. Measured from when the job is accepted for dispatch.</p></div>
+<%- include('../partials/foot') %>

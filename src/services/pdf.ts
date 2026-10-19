@@ -11,7 +11,8 @@ type Doc = PDFKit.PDFDocument;
 
 function render(build: (doc: Doc) => void | Promise<void>): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 50, info: { Producer: 'Ridgeline Facilities' } });
+    // Uncompressed in tests so document text can be asserted.
+    const doc = new PDFDocument({ size: 'A4', margin: 50, compress: process.env.NODE_ENV !== 'test', info: { Producer: 'Ridgeline Facilities' } });
     const chunks: Buffer[] = [];
     doc.on('data', (c: Buffer) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -31,18 +32,31 @@ function fmtDateTime(d: string | Date | null | undefined): string {
   return new Date(d).toLocaleString('en-NZ', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Pacific/Auckland' });
 }
 
+/** "LHA Holdings Limited trading as Ridgeline Facilities" — the legal party on every document. */
+export function legalEntity(company: { legal_name: string; trading_name?: string; name?: string }): string {
+  return `${company.legal_name} trading as ${company.trading_name ?? company.name}`;
+}
+
 async function header(doc: Doc, db: Db, title: string) {
   const s = await getSettings(db);
-  doc.fontSize(18).font('Helvetica-Bold').text(s.company.name, 50, 50);
+  const c = s.company;
+  doc.fontSize(18).font('Helvetica-Bold').text(c.trading_name ?? c.name, 50, 50);
   doc.fontSize(9).font('Helvetica').fillColor('#444');
-  const lines = [s.company.legal_name, s.company.address, s.company.email, s.company.phone, s.company.website,
-    s.company.gst_number ? `GST number: ${s.company.gst_number}` : null, s.company.nzbn ? `NZBN: ${s.company.nzbn}` : null].filter(Boolean);
-  doc.text(lines.join('\n'));
+  const lines = [`${legalEntity(c)}`, c.nzbn ? `NZBN ${c.nzbn}` : null, c.gst_number ? `GST number: ${c.gst_number}` : null,
+    c.address, c.email, c.phone, c.website].filter(Boolean);
+  doc.text(lines.join('\n'), { width: 290 });
   doc.fillColor('#000').fontSize(16).font('Helvetica-Bold').text(title, 350, 50, { width: 195, align: 'right' });
   doc.font('Helvetica').fontSize(10);
-  doc.moveDown(4);
+  doc.y = Math.max(doc.y, 150);
+  doc.moveDown(1);
   doc.x = 50;
   return s;
+}
+
+function footer(doc: Doc, company: { legal_name: string; trading_name?: string; name?: string; nzbn?: string }) {
+  doc.moveDown(2).fontSize(7.5).fillColor('#666')
+    .text(`${company.trading_name ?? company.name} is a trading name of ${company.legal_name}${company.nzbn ? ` (NZBN ${company.nzbn})` : ''}.`, 50, doc.y, { width: 495 });
+  doc.fillColor('#000');
 }
 
 function table(doc: Doc, cols: { label: string; width: number; align?: 'left' | 'right' }[], rows: string[][]) {
@@ -86,7 +100,8 @@ export async function customerInvoicePdf(db: Db, invoiceId: string): Promise<Buf
   const lines = await query(db, 'SELECT * FROM customer_invoice_lines WHERE invoice_id = $1 ORDER BY line_no', [invoiceId]);
   const credits = await query(db, 'SELECT * FROM credit_notes WHERE customer_invoice_id = $1 ORDER BY created_at', [invoiceId]);
   return render(async (doc) => {
-    const s = await header(doc, db, inv.gst_cents > 0 ? 'TAX INVOICE' : 'INVOICE');
+    const company = (await getSettings(db)).company;
+    const s = await header(doc, db, inv.gst_cents > 0 && company.gst_number ? 'TAX INVOICE' : 'INVOICE');
     doc.fontSize(10).font('Helvetica-Bold').text('Bill to');
     doc.font('Helvetica').text([inv.customer_legal_name || inv.customer_name, inv.billing_address, inv.customer_gst ? `GST: ${inv.customer_gst}` : null,
       `Account: ${inv.account_ref}`].filter(Boolean).join('\n'));
@@ -117,6 +132,7 @@ export async function customerInvoicePdf(db: Db, invoiceId: string): Promise<Buf
     } else {
       doc.text('This invoice has been settled from your prepaid maintenance account. No payment is required.');
     }
+    footer(doc, s.company);
   });
 }
 
@@ -145,7 +161,8 @@ export async function statementPdf(db: Db, customerId: string): Promise<Buffer> 
       table(doc, [{ label: 'Invoice', width: 110 }, { label: 'Issued', width: 90 }, { label: 'Due', width: 90 }, { label: 'Total', width: 100, align: 'right' }, { label: 'Outstanding', width: 105, align: 'right' }],
         invoices.map((i) => [i.invoice_number, fmtDate(i.issue_date), fmtDate(i.due_date), formatNzd(i.total_cents), formatNzd(outstandingCents(i))]));
     }
-    doc.moveDown().fontSize(8).fillColor('#555').text('Your prepaid balance is held as a credit on your account under your service agreement. Charges are deducted only when a job is invoiced.');
+    doc.moveDown().fontSize(8).fillColor('#555').text(`Your prepaid balance is held as a credit on your account with ${legalEntity((await getSettings(db)).company)} under your service agreement. Charges are deducted only when a job is invoiced.`);
+    footer(doc, (await getSettings(db)).company);
   });
 }
 
@@ -181,6 +198,7 @@ export async function completionReportPdf(db: Db, jobId: string): Promise<Buffer
     }
     doc.moveDown().text(`Photographic evidence on file: ${evidence.map((e) => `${e.n} ${e.kind.replace('_', ' ')}`).join(', ') || 'none'}. Photos are available in the customer portal.`);
     doc.moveDown().fontSize(8).fillColor('#555').text('Event times are recorded by Ridgeline servers. Device-supplied photo times and locations are shown as reported and are not independently verified.');
+    footer(doc, (await getSettings(db)).company);
   });
 }
 
@@ -191,10 +209,84 @@ export async function remittancePdf(db: Db, paymentId: string): Promise<Buffer> 
        JOIN contractor_invoices ci ON ci.id = pb.contractor_invoice_id JOIN jobs j ON j.id = pb.job_id WHERE cp.id = $1`, [paymentId]);
   return render(async (doc) => {
     await header(doc, db, 'REMITTANCE ADVICE');
-    doc.text(`To: ${p.legal_name}\nPayment date: ${fmtDate(p.paid_date)}\nReference: ${p.payment_reference ?? 'pending'}`);
+    doc.text(`From: ${legalEntity((await getSettings(db)).company)}\nTo: ${p.legal_name}\nPayment date: ${fmtDate(p.paid_date)}\nReference: ${p.payment_reference ?? 'pending'}`);
     doc.moveDown();
     table(doc, [{ label: 'Invoice', width: 120 }, { label: 'Job', width: 110 }, { label: 'Invoice total', width: 90, align: 'right' },
       { label: 'Adjustments', width: 85, align: 'right' }, { label: 'Paid', width: 90, align: 'right' }],
       [[p.invoice_number, p.job_ref, formatNzd(p.invoice_total), formatNzd(p.adjustments_cents), formatNzd(p.amount_cents)]]);
+    footer(doc, (await getSettings(db)).company);
+  });
+}
+
+/** Credit note (a GST credit note where the original was a tax invoice). */
+export async function creditNotePdf(db: Db, creditNoteId: string): Promise<Buffer> {
+  const cn = await maybeOne(db,
+    `SELECT cn.*, ci.invoice_number, ci.issue_date AS invoice_date, c.name AS customer_name, c.legal_name AS customer_legal_name, c.billing_address,
+            c.account_ref, c.gst_number AS customer_gst, j.ref AS job_ref
+       FROM credit_notes cn JOIN customer_invoices ci ON ci.id = cn.customer_invoice_id JOIN customers c ON c.id = cn.customer_id JOIN jobs j ON j.id = ci.job_id
+      WHERE cn.id = $1`, [creditNoteId]);
+  if (!cn) throw new NotFoundError('Credit note');
+  return render(async (doc) => {
+    const company = (await getSettings(db)).company;
+    const s = await header(doc, db, cn.gst_cents > 0 && company.gst_number ? 'CREDIT NOTE (GST)' : 'CREDIT NOTE');
+    doc.font('Helvetica-Bold').text('Credit to');
+    doc.font('Helvetica').text([cn.customer_legal_name || cn.customer_name, cn.billing_address, cn.customer_gst ? `GST: ${cn.customer_gst}` : null, `Account: ${cn.account_ref}`].filter(Boolean).join('\n'));
+    doc.moveDown();
+    doc.text([`Credit note number: ${cn.credit_note_number}`, `Date: ${fmtDate(cn.created_at)}`, `Original invoice: ${cn.invoice_number} (${fmtDate(cn.invoice_date)})`, `Job: ${cn.job_ref}`].join('\n'));
+    doc.moveDown().font('Helvetica-Bold').text('Reason').font('Helvetica').text(cn.reason);
+    doc.moveDown();
+    totals(doc, [
+      ['Credit (excl GST)', formatNzd(cn.amount_ex_gst_cents)],
+      ['GST', formatNzd(cn.gst_cents)],
+      ['Total credit (incl GST)', formatNzd(cn.total_cents), true],
+      ['Applied to amount owing', formatNzd(cn.to_receivable_cents)],
+      ['Returned to prepaid balance', formatNzd(cn.to_prepaid_cents)],
+    ]);
+    footer(doc, s.company);
+  });
+}
+
+/** Monthly customer report: jobs, spend, SLA performance and prepaid account movement for one month (YYYY-MM). */
+export async function monthlyReportPdf(db: Db, customerId: string, month: string): Promise<Buffer> {
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new NotFoundError('Report month');
+  const { slaPerformance, priorityLabel } = await import('./sla.js');
+  const from = `${month}-01`;
+  const end = new Date(`${from}T00:00:00Z`); end.setUTCMonth(end.getUTCMonth() + 1); end.setUTCDate(0);
+  const to = end.toISOString().slice(0, 10);
+  const c = await one(db, 'SELECT * FROM customers WHERE id = $1', [customerId]);
+  const sla = await slaPerformance(db, { from, to }, customerId);
+  const jobs = await query(db,
+    `SELECT j.ref, j.title, j.priority, j.status, j.sla_onsite_met, j.sla_resolve_met, s.name AS site_name,
+            (SELECT total_cents FROM customer_invoices ci WHERE ci.job_id = j.id AND ci.status NOT IN ('draft','void')) AS invoiced
+       FROM jobs j JOIN sites s ON s.id = j.site_id
+      WHERE j.customer_id = $1 AND (j.created_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $2 AND $3 ORDER BY j.created_at`, [customerId, from, to]);
+  const money = await one(db,
+    `SELECT COALESCE(SUM(amount_cents) FILTER (WHERE txn_type IN ('deposit','top_up')),0)::bigint AS topups,
+            COALESCE(-SUM(amount_cents) FILTER (WHERE txn_type IN ('job_charge','receivable_settlement')),0)::bigint AS charges,
+            COALESCE(SUM(amount_cents) FILTER (WHERE txn_type NOT IN ('deposit','top_up','job_charge','receivable_settlement')),0)::bigint AS other
+       FROM prepaid_transactions WHERE customer_id = $1 AND (created_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $2 AND $3`, [customerId, from, to]);
+  const closing = await maybeOne(db, `SELECT balance_after_cents FROM prepaid_transactions WHERE customer_id = $1 AND (created_at AT TIME ZONE 'Pacific/Auckland')::date <= $2
+    ORDER BY created_at DESC, id DESC LIMIT 1`, [customerId, to]);
+  const monthLabel = new Date(`${from}T00:00:00Z`).toLocaleDateString('en-NZ', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return render(async (doc) => {
+    const s = await header(doc, db, 'MONTHLY REPORT');
+    doc.font('Helvetica-Bold').text(`${c.legal_name || c.name} · ${monthLabel}`);
+    doc.font('Helvetica').text(`Account ${c.account_ref}`);
+    doc.moveDown().font('Helvetica-Bold').text('Service levels');
+    table(doc, [{ label: 'Priority', width: 120 }, { label: 'Jobs', width: 50, align: 'right' }, { label: 'On site in target', width: 110, align: 'right' },
+      { label: 'Resolved in target', width: 115, align: 'right' }, { label: 'Avg time to site', width: 100, align: 'right' }],
+      sla.map((r) => [`${r.code} ${r.label}`, String(r.jobs), r.onsitePct === null ? '—' : `${r.onsiteMet}/${r.onsiteMeasured} (${r.onsitePct}%)`,
+        r.resolvePct === null ? '—' : `${r.resolveMet}/${r.resolveMeasured} (${r.resolvePct}%)`,
+        r.avgMinutesToSite === null ? '—' : `${Math.floor(r.avgMinutesToSite / 60)}h ${r.avgMinutesToSite % 60}m`]));
+    doc.fontSize(8).fillColor('#555').text('Targets are measured from when a job is accepted for dispatch. P2/P3 targets count NZ business hours; P1 targets run 24/7. Jobs still open are measured once their target passes or the visit occurs.').fillColor('#000').fontSize(10);
+    doc.moveDown().font('Helvetica-Bold').text('Prepaid account');
+    totals(doc, [['Top-ups received', formatNzd(money.topups)], ['Maintenance charges', formatNzd(money.charges)], ['Refunds, credits & adjustments', formatNzd(money.other)],
+      ['Balance at month end', formatNzd(closing?.balance_after_cents ?? 0), true]]);
+    doc.moveDown().font('Helvetica-Bold').text(`Jobs booked (${jobs.length})`);
+    table(doc, [{ label: 'Job', width: 75 }, { label: 'Site / description', width: 190 }, { label: 'Priority', width: 75 }, { label: 'SLA', width: 70 }, { label: 'Invoiced', width: 85, align: 'right' }],
+      jobs.map((j) => [j.ref, `${j.site_name}: ${j.title}`, priorityLabel(j.priority),
+        j.sla_onsite_met === null ? (j.status === 'cancelled' ? 'Cancelled' : 'Open') : j.sla_onsite_met && j.sla_resolve_met !== false ? 'Met' : 'Missed',
+        j.invoiced ? formatNzd(j.invoiced) : '—']));
+    footer(doc, s.company);
   });
 }

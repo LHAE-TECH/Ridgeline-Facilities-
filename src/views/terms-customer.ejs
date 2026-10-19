@@ -1,0 +1,21 @@
+<%- include('partials/head', { title: 'Customer service agreement' }) %>
+<div class="card" style="max-width:860px;margin:0 auto">
+  <h1>Customer service agreement</h1>
+  <p class="muted">Version <%= version %>. DRAFT for legal review before use.</p>
+  <h3>1. The parties</h3>
+  <p>This agreement is between <strong><%= company.legal_name %></strong> (NZBN <%= company.nzbn %>), trading as <strong><%= company.trading_name %></strong> ("Ridgeline", "we"), and the organisation that opens the account ("you"). References to Ridgeline Facilities mean <%= company.legal_name %>.</p>
+  <h3>2. Prepaid maintenance account</h3>
+  <p>You keep a prepaid balance with us of at least the agreed minimum balance shown on your account. The balance is held as a credit on your account; it is not a fee and is not our revenue until applied to an invoice. Approved maintenance charges are deducted when we issue the tax invoice for a job. You top up when the balance falls below the agreed minimum. Any unused credit is refundable on request or when the account closes, after outstanding invoices are settled.</p>
+  <p>If you authorise automatic top-ups, we will charge the agreed amount to your saved card, or request payment, only as described in the authority you give on the account page. You can withdraw it at any time.</p>
+  <h3>3. Booking and priorities</h3>
+  <p>Jobs are classified using our published priority matrix: P1 Emergency (on site within 2 hours in metro areas and made safe within 4 hours, 24/7; separate targets apply outside metro areas), P2 Urgent (on site within 8 business hours, resolved within 2 business days), P3 Standard (on site within 48 business hours, resolved within 10 business days) and P4 Scheduled (agreed date). Business hours are 8:00am–5:00pm Monday to Friday excluding New Zealand public holidays unless your account states otherwise. Targets are measured from when the job is accepted for dispatch. Reported safety risks are always treated as P1; we may reclassify a job and will tell you why.</p>
+  <h3>4. Charges</h3>
+  <p>We charge the approved contractor cost plus our markup, and the callout, after-hours, weekend, public holiday, travel, materials, minimum and cancellation charges set out in your rate schedule, plus GST. Estimates are estimates only. Jobs above your authority limit, quotes and variations require approval from your authorised approver. Late cancellations after a contractor has been dispatched may be charged as stated in your rate schedule.</p>
+  <h3>5. Invoices and payment</h3>
+  <p>Tax invoices are issued by <%= company.legal_name %><%= company.gst_number ? ' (GST ' + company.gst_number + ')' : '' %>. Prepaid credit is applied automatically unless agreed otherwise; any remaining amount is payable within your payment terms.</p>
+  <h3>6. Work and evidence</h3>
+  <p>Contractors are independent businesses engaged by us. We verify completion evidence before invoicing and provide you with the completion report. Raise any concern through the portal within 14 days of the invoice; disputed amounts are held while we investigate.</p>
+  <h3>7. Liability, privacy and general</h3>
+  <p>[To be completed with legal advice: limitation of liability, Consumer Guarantees Act position for business customers, health and safety responsibilities as PCBUs, insurance, termination, governing law (New Zealand).] Personal information is handled under our <a href="/privacy">privacy statement</a>.</p>
+</div>
+<%- include('partials/foot') %>

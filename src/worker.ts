@@ -1,6 +1,9 @@
 import type { Db } from './db.js';
 import { pool, query } from './db.js';
-import { checkSlaRisks, expireOffers } from './services/dispatch.js';
+import { advanceDispatchWaves, escalateUnassigned, expireOffers } from './services/dispatch.js';
+import { checkSlaBreaches } from './services/sla.js';
+import { processAutoTopUps } from './services/autoTopUp.js';
+import { sendMonthlyReports } from './services/monthlyReport.js';
 import { autoCloseJobs } from './services/jobs.js';
 import { deliverPending, link, notifyContractor, notifyStaff } from './services/notifications.js';
 import { processLowBalances } from './services/payments.js';
@@ -32,8 +35,12 @@ export async function runWorkerCycle(db: Db = pool): Promise<CycleResult | null>
     const result: CycleResult = {};
     const tasks: [string, () => Promise<unknown>][] = [
       ['expiredOffers', () => expireOffers(db)],
-      ['slaAlerts', () => checkSlaRisks(db)],
+      ['dispatchWaves', () => advanceDispatchWaves(db)],
+      ['escalations', () => escalateUnassigned(db)],
+      ['sla', () => checkSlaBreaches(db)],
+      ['autoTopUps', () => processAutoTopUps(db)],
       ['lowBalances', () => processLowBalances(db)],
+      ['monthlyReports', () => sendMonthlyReports(db)],
       ['complianceAlerts', () => complianceExpiryAlerts(db)],
       ['closedJobs', () => autoCloseJobs(db)],
       ['xero', () => processXeroQueue(db)],

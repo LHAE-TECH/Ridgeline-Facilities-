@@ -10,16 +10,28 @@
     <div><label>Building / facility</label><select name="facility_id"><option value="">—</option><% facilities.forEach(function (f) { %><option value="<%= f.id %>" data-site="<%= f.site_id %>" <%= form.facility_id === f.id ? 'selected' : '' %>><%= f.name %></option><% }) %></select></div>
     <div><label>Unit</label><select name="unit_id"><option value="">Common area / not unit-specific</option><% units.forEach(function (u) { %><option value="<%= u.id %>" data-site="<%= u.site_id %>" <%= form.unit_id === u.id ? 'selected' : '' %>><%= u.label %></option><% }) %></select></div>
     <div><label>Job category</label><select name="trade_id" required><% trades.forEach(function (t) { %><option value="<%= t.id %>" <%= String(form.trade_id) === String(t.id) ? 'selected' : '' %>><%= t.name %></option><% }) %></select></div>
-    <div><label>Priority</label><select name="priority"><% [['routine','Routine'],['urgent','Urgent (within 24 h)'],['emergency','Emergency (immediate risk)']].forEach(function (p) { %><option value="<%= p[0] %>" <%= form.priority === p[0] ? 'selected' : '' %>><%= p[1] %></option><% }) %></select></div>
     <div><label>Purchase order <%= customer.po_required ? '(required)' : '(optional)' %></label><input name="po_number" value="<%= form.po_number || '' %>" <%= customer.po_required ? 'required' : '' %>></div>
   </div>
+  <fieldset class="card" style="background:var(--bg)"><legend><strong>How urgent is it?</strong></legend>
+    <% triageQuestions.forEach(function (q, i) { const name = ['triage_safety','triage_use','triage_planned'][i]; %>
+      <div class="triage-q"><p><%= q.text %></p>
+        <label class="check" style="display:inline-flex;margin-right:1rem"><input type="radio" name="<%= name %>" value="yes" <%= form[name] === 'yes' ? 'checked' : '' %>> Yes</label>
+        <label class="check" style="display:inline-flex"><input type="radio" name="<%= name %>" value="no" <%= form[name] !== 'yes' ? 'checked' : '' %>> No</label></div>
+    <% }) %>
+    <div><label>Priority</label><select name="priority">
+      <option value="">Set from my answers (recommended)</option>
+      <% Object.keys(priorityMeta).forEach(function (p) { const m = priorityMeta[p]; %><option value="<%= p %>" <%= form.priority === p ? 'selected' : '' %>><%= m.code %> <%= m.label %> – <%= m.summary %></option><% }) %>
+    </select>
+    <div class="field-hint">If you report a safety risk the job is always booked as P1. Choosing a higher priority than your answers suggest is allowed but reviewed by Ridgeline. P4 Scheduled needs an agreed date below.</div></div>
+    <% if (customer.status === 'active') { %><p class="field-hint"><strong>Life-threatening emergency?</strong> Call 111 first.</p><% } %>
+  </fieldset>
   <div><label>Short title</label><input name="title" required maxlength="140" value="<%= form.title || '' %>" placeholder="e.g. Leaking kitchen tap"></div>
   <div><label>Describe the problem</label><textarea name="description" required rows="4"><%= form.description || '' %></textarea></div>
   <div><label>Access instructions</label><textarea name="access_instructions" rows="2" placeholder="Leave blank to use the site's standard instructions"><%= form.access_instructions || '' %></textarea></div>
   <div class="grid-2">
     <div><label>Site contact name</label><input name="site_contact_name" value="<%= form.site_contact_name || '' %>"></div>
     <div><label>Site contact phone</label><input name="site_contact_phone" type="tel" value="<%= form.site_contact_phone || '' %>"></div>
-    <div><label>Preferred attendance from</label><input name="preferred_start" type="datetime-local" value="<%= form.preferred_start || '' %>"></div>
+    <div><label>Preferred attendance from (agreed date for P4)</label><input name="preferred_start" type="datetime-local" value="<%= form.preferred_start || '' %>"></div>
     <div><label>Preferred attendance until</label><input name="preferred_end" type="datetime-local" value="<%= form.preferred_end || '' %>"></div>
   </div>
   <div><label>Photos of the problem (optional)</label><input type="file" name="photos" accept="image/*" capture="environment" multiple></div>

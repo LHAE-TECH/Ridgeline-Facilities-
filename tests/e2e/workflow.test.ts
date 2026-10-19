@@ -163,7 +163,7 @@ describe('criterion 18: the full workflow works on mobile and desktop', () => {
 
   it('every portal page lays out without horizontal scrolling at phone and desktop widths', async () => {
     const pages: Record<string, string[]> = {
-      customer: ['/app', '/app/jobs', '/app/jobs/new', '/app/account', '/app/invoices', '/app/properties', '/app/assessment', '/app/users'],
+      customer: ['/app', '/app/jobs', '/app/jobs/new', '/app/account', '/app/invoices', '/app/reports', '/app/properties', '/app/assessment', '/app/users'],
       contractor: ['/c', '/c/invoices', '/c/profile'],
       admin: ['/admin', '/admin/dispatch', '/admin/jobs', '/admin/customers', '/admin/contractors', '/admin/contractor-invoices', '/admin/customer-invoices',
         '/admin/payments', '/admin/payables', '/admin/disputes', '/admin/refunds', '/admin/settings', '/admin/reports', '/admin/integrations', '/admin/notifications', '/admin/audit'],
@@ -183,7 +183,7 @@ describe('criterion 18: the full workflow works on mobile and desktop', () => {
       }
       const anon = await browser.newContext({ viewport });
       const page = await anon.newPage();
-      for (const p of ['/', '/login', '/register', '/contractors/apply']) await visit(page, p);
+      for (const p of ['/', '/login', '/register', '/contractors/apply', '/terms/customer', '/terms/contractor', '/privacy']) await visit(page, p);
       await anon.close();
     }
     expect(overflowFailures).toEqual([]);

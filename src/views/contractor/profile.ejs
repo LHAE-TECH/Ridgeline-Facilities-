@@ -6,7 +6,8 @@
       <label class="check"><input type="checkbox" name="available" <%= contractor.available ? 'checked' : '' %>> Available for new jobs</label>
       <label class="check"><input type="checkbox" name="after_hours" <%= contractor.after_hours_available ? 'checked' : '' %>> Available after hours / weekends</label>
       <label class="check"><input type="checkbox" name="emergency" <%= contractor.emergency_available ? 'checked' : '' %>> Available for emergencies</label>
-      <div><label>Phone</label><input name="phone" value="<%= contractor.phone || '' %>"></div>
+      <div class="grid-2"><div><label>Phone</label><input name="phone" value="<%= contractor.phone || '' %>"></div>
+      <div><label>Mobile for SMS job offers</label><input name="mobile_phone" type="tel" value="<%= contractor.mobile_phone || '' %>" placeholder="021 555 0199"><div class="field-hint">Required for P1 emergency offers.</div></div></div>
       <div class="grid-2"><div><label>Bank account name</label><input name="bank_account_name" value="<%= contractor.bank_account_name || '' %>"></div><div><label>Bank account number</label><input name="bank_account_number" value="<%= contractor.bank_account_number || '' %>"></div></div>
       <button type="submit">Save</button>
     </form>

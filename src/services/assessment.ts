@@ -55,6 +55,8 @@ export interface AssessmentResult {
   customerMonthlyExGstCents: number;
   gstCents: number;
   monthlySpendCents: number;
+  /** Monthly spend after the portfolio scale taper: the amount the coverage factor is applied to. */
+  coveredSpendCents: number;
   coverageFactorBps: number;
   calculatedCents: number;
   recommendedCents: number;
@@ -68,7 +70,7 @@ export function computeAssessment(
   inputs: AssessmentInputs,
   coverageFactorBps: number,
   settings: Pick<Settings, 'assessment_markup_bps' | 'gst_rate_bps' | 'ridgeline_gst_registered' | 'emergency_cover_factor_bps' |
-    'balance_rounding_cents' | 'min_balance_floor_cents' | 'standard_max_balance_cents'>,
+    'balance_rounding_cents' | 'min_balance_floor_cents' | 'standard_max_balance_cents' | 'assessment_scale_bands'>,
   effectiveCategory: string,
 ): AssessmentResult {
   if (inputs.facilities.length === 0) throw new AppError('Add at least one facility before calculating the minimum balance');
@@ -106,7 +108,8 @@ export function computeAssessment(
   const customerMonthlyExGstCents = lines.reduce((s, l) => s + l.customerMonthlyExGstCents, 0);
   const gstCents = settings.ridgeline_gst_registered ? gstOn(customerMonthlyExGstCents, settings.gst_rate_bps) : 0;
   const monthlySpendCents = customerMonthlyExGstCents + gstCents;
-  const calculatedCents = Math.round((monthlySpendCents * coverageFactorBps) / 10000);
+  const { covered: coveredSpendCents, explanation: taperExplanation } = applyScaleTaper(monthlySpendCents, settings.assessment_scale_bands);
+  const calculatedCents = Math.round((coveredSpendCents * coverageFactorBps) / 10000);
   const rounding = Math.max(1, settings.balance_rounding_cents);
   let recommendedCents = Math.ceil(calculatedCents / rounding) * rounding;
   let floorApplied = false;
@@ -124,7 +127,10 @@ export function computeAssessment(
       ? `Add GST at ${formatBps(settings.gst_rate_bps)}: ${formatNzd(gstCents)} → estimated monthly maintenance spend ${formatNzd(monthlySpendCents)}.`
       : `Estimated monthly maintenance spend ${formatNzd(monthlySpendCents)} (no GST).`,
     `Coverage factor for ${effectiveCategory} / ${inputs.serviceLevel} agreements: ${formatMultiplier(coverageFactorBps)}.`,
-    `Required minimum balance = ${formatNzd(monthlySpendCents)} × ${formatMultiplier(coverageFactorBps)} = ${formatNzd(calculatedCents)}.`,
+    coveredSpendCents === monthlySpendCents
+      ? `Portfolio scale adjustment: none (spend within the first band).`
+      : `Portfolio scale adjustment (larger portfolios have steadier spend): ${taperExplanation} = ${formatNzd(coveredSpendCents)} of monthly spend needs coverage.`,
+    `Required minimum balance = ${formatNzd(coveredSpendCents)} × ${formatMultiplier(coverageFactorBps)} = ${formatNzd(calculatedCents)}.`,
     `Rounded up to the nearest ${formatNzd(rounding)}: ${formatNzd(Math.ceil(calculatedCents / rounding) * rounding)}.`,
   ];
   if (floorApplied) steps.push(`Below the ${formatNzd(settings.min_balance_floor_cents)} account minimum, so the minimum of ${formatNzd(settings.min_balance_floor_cents)} applies.`);
@@ -134,9 +140,32 @@ export function computeAssessment(
   steps.push(`Recommended minimum prepaid balance: ${formatNzd(recommendedCents)}.`);
 
   return {
-    effectiveCategory, lines, contractorMonthlyCents, customerMonthlyExGstCents, gstCents, monthlySpendCents,
+    effectiveCategory, lines, contractorMonthlyCents, customerMonthlyExGstCents, gstCents, monthlySpendCents, coveredSpendCents,
     coverageFactorBps, calculatedCents, recommendedCents, requiresCustom, floorApplied, steps,
   };
+}
+
+/**
+ * Marginal taper on monthly spend: each band's share of spend is multiplied by its coverage share, like tax
+ * brackets. The covered amount therefore never falls as spend grows, while the per-unit requirement does.
+ */
+export function applyScaleTaper(spendCents: number, bands: { up_to_cents: number | null; coverage_bps: number }[]): { covered: number; explanation: string } {
+  if (!bands?.length) return { covered: spendCents, explanation: '' };
+  let covered = 0;
+  let lower = 0;
+  const parts: string[] = [];
+  for (const b of bands) {
+    if (spendCents <= lower) break;
+    const upper = b.up_to_cents === null ? spendCents : Math.min(spendCents, b.up_to_cents);
+    const slice = upper - lower;
+    if (slice > 0) {
+      covered += Math.round((slice * b.coverage_bps) / 10000);
+      parts.push(`${formatNzd(slice)} × ${formatBps(b.coverage_bps)}`);
+    }
+    if (b.up_to_cents === null) break;
+    lower = b.up_to_cents;
+  }
+  return { covered, explanation: parts.join(' + ') };
 }
 
 /** A portfolio spanning more than one facility category is assessed as 'mixed'. */

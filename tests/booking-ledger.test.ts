@@ -15,7 +15,7 @@ describe('criterion 2: restricted bookings blocked when the prepaid account fail
     await expect(book(fx)).rejects.toThrow(/assessed and agreed/);
   });
 
-  it('holds a routine job (no dispatch, no offers, no commitment) while the balance is below the agreed minimum', async () => {
+  it('holds a P3 standard job (no dispatch, no offers, no commitment) while the balance is below the agreed minimum', async () => {
     await approvedContractor();
     const fx = await newCustomer();
     const admin = await staff('admin');

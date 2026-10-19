@@ -8,6 +8,8 @@ import { AppError, ForbiddenError } from '../lib/errors.js';
 import { formatBps, formatMultiplier, formatNzd, formatQuantity, parseDollars, parseQuantity } from '../lib/money.js';
 import { JOB_STATUS_LABELS } from '../services/jobState.js';
 import { TIME_WINDOW_LABELS } from '../services/timeWindows.js';
+import { priorityLabel } from '../services/sla.js';
+import { getSettings } from '../services/settings.js';
 
 declare module 'express-session' {
   interface SessionData {
@@ -49,6 +51,7 @@ export const loadUser: RequestHandler = async (req, res, next) => {
   res.locals.flash = req.session.flash ?? [];
   req.session.flash = [];
   res.locals.path = req.path;
+  res.locals.company = (await getSettings(pool)).company;
   Object.assign(res.locals, viewHelpers);
   next();
 };
@@ -185,6 +188,13 @@ export const viewHelpers = {
   dt: (d: string | Date | null | undefined) => d ? new Date(d).toLocaleString('en-NZ', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Pacific/Auckland' }) : '—',
   dollarsInput: (cents: number | null | undefined) => (cents == null ? '' : (cents / 100).toFixed(2)),
   newKey,
+  prio: priorityLabel,
+  slaBadge: (leg: { state: string; remainingMinutes: number | null }) => {
+    const m = leg.remainingMinutes;
+    const span = m === null ? '' : Math.abs(m) >= 1440 ? `${Math.round(Math.abs(m) / 1440)}d` : Math.abs(m) >= 60 ? `${Math.floor(Math.abs(m) / 60)}h ${Math.abs(m) % 60}m` : `${Math.abs(m)}m`;
+    return { not_started: 'Clock not started', on_track: `On track · ${span} left`, at_risk: `At risk · ${span} left`, breached: `Breached · ${span} over`,
+      met: 'Met', missed: 'Missed' }[leg.state] ?? leg.state;
+  },
 };
 
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction): void {

@@ -1,13 +1,34 @@
 <%- include('../partials/head', { title: job.ref }) %>
-<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><a href="/admin/customers/<%= job.customer_id %>"><%= job.customer_name %></a> · <%= job.site_name %>, <%= job.site_region %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <%= humanize(job.priority) %></small></div>
+<div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><a href="/admin/customers/<%= job.customer_id %>"><%= job.customer_name %></a> · <%= job.site_name %>, <%= job.site_region %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <strong><%= prio(job.priority) %></strong></small></div>
 <div><%- include('../partials/status', { s: job.status }) %></div></div>
 <% if (job.hold_reason) { %><div class="notice"><%= job.hold_reason %></div><% } %>
+<% if (job.priority_note) { %><div class="notice"><strong>Priority:</strong> <%= job.priority_note %></div><% } %>
+<div class="card"><h2>Service level</h2>
+  <% if (!job.sla_started_at) { %><p class="muted">Clock starts when the job is accepted for dispatch.</p><% } else { %>
+  <div class="grid-2">
+    <div><strong><%= job.sla_targets.onsite %></strong><br>Due <%= dt(job.sla_onsite_due) %><br>
+      <span class="badge <%= ['breached','missed'].includes(sla.onsite.state) ? 'err' : sla.onsite.state === 'at_risk' ? 'warn' : 'ok' %>"><%= slaBadge(sla.onsite) %></span><% if (job.arrived_at) { %> <small>arrived <%= dt(job.arrived_at) %></small><% } %></div>
+    <div><strong><%= job.sla_targets.resolve %></strong><br>Due <%= dt(job.sla_resolve_due) %><br>
+      <span class="badge <%= ['breached','missed'].includes(sla.resolve.state) ? 'err' : sla.resolve.state === 'at_risk' ? 'warn' : 'ok' %>"><%= slaBadge(sla.resolve) %></span>
+      <% if (job.made_safe_at) { %> <small>made safe <%= dt(job.made_safe_at) %></small><% } else if (job.completed_at) { %> <small>completed <%= dt(job.completed_at) %></small><% } %></div>
+  </div>
+  <p class="field-hint">Clock started <%= dt(job.sla_started_at) %> · <%= job.sla_targets.metro ? 'Metro site' : 'Non-metro site' %><% if (job.escalation_level) { %> · escalated <%= dt(job.escalated_at) %> (level <%= job.escalation_level %>)<% } %></p>
+  <% } %>
+  <% if (job.triage) { %><details><summary>Intake triage (suggested <%= job.suggested_priority ? prio(job.suggested_priority) : '—' %>)</summary><ul>
+    <% triageQuestions.forEach(function (q) { %><li><%= q.text %> <strong><%= job.triage[q.key] ? 'Yes' : 'No' %></strong></li><% }) %></ul></details><% } %>
+  <% if (!['closed','cancelled'].includes(job.status) && actor.role !== 'finance') { %>
+  <form method="post" action="/admin/jobs/<%= job.id %>/priority" class="inline-form"><%- include('../partials/csrf') %>
+    <select name="priority"><% Object.keys(priorityMeta).forEach(function (p) { %><option value="<%= p %>" <%= p === job.priority ? 'selected' : '' %>><%= priorityMeta[p].code %> <%= priorityMeta[p].label %></option><% }) %></select>
+    <input name="reason" required placeholder="Reason for reclassifying"><button class="small secondary" type="submit">Reclassify</button></form>
+  <form method="post" action="/admin/sites/<%= job.site_id %>/metro" class="inline-form"><%- include('../partials/csrf') %><input type="hidden" name="back" value="/admin/jobs/<%= job.id %>">
+    <input type="hidden" name="is_metro" value="<%= job.site_is_metro ? '' : 'on' %>"><button class="small secondary" type="submit">Site is <%= job.site_is_metro ? 'metro' : 'non-metro' %>: mark <%= job.site_is_metro ? 'non-metro' : 'metro' %></button></form>
+  <% } %>
+</div>
 <div class="grid-2">
   <div class="card"><h2>Details</h2><dl class="kv">
     <dt>Description</dt><dd><%= job.description %></dd><dt>Access</dt><dd><%= job.access_instructions || '—' %></dd>
     <dt>Site contact</dt><dd><%= job.site_contact_name || '—' %> <%= job.site_contact_phone || '' %></dd><dt>PO</dt><dd><%= job.po_number || '—' %></dd>
     <dt>Preferred</dt><dd><%= dt(job.preferred_start) %> – <%= dt(job.preferred_end) %></dd>
-    <dt>Respond / attend by</dt><dd><%= dt(job.respond_by) %> / <%= dt(job.attend_by) %></dd>
     <dt>Estimate</dt><dd><%= money(job.estimate_total_cents) %> incl GST · authorised contractor cost <%= money(job.authorised_contractor_cost_cents) %></dd>
     <dt>Commitment</dt><dd><%= commitment ? money(commitment.amount_cents) + ' (' + commitment.status + ')' : '—' %></dd>
     <dt>Contractor</dt><dd><%= job.contractor_trading_name || job.contractor_legal_name || '—' %></dd>
@@ -24,7 +45,10 @@
     <% if (['dispatch','offered','assigned','on_site','in_progress'].includes(job.status) && actor.role !== 'finance') { %>
       <form method="post" action="/admin/jobs/<%= job.id %>/assign" class="stack"><%- include('../partials/csrf') %>
         <label><%= job.assigned_contractor_id ? 'Reassign to' : 'Assign to' %></label>
-        <select name="contractor_id"><% candidates.forEach(function (c) { %><option value="<%= c.contractorId %>"><%= c.eligible ? '✓' : '✗' %> <%= c.name %><%= c.distanceKm != null ? ' (' + c.distanceKm + ' km)' : '' %> – <%= c.activeJobs %> active</option><% }) %></select>
+        <select name="contractor_id">
+          <% ranked.forEach(function (c, i) { %><option value="<%= c.contractorId %>"><%= i + 1 %>. <%= c.name %> – ETA ~<%= c.estArrivalMinutes %> min<%= c.canMeet ? '' : ' (may miss SLA)' %><%= c.onTimeRate != null ? ' · ' + Math.round(c.onTimeRate * 100) + '% on time' : '' %></option><% }) %>
+          <% candidates.filter(function (c) { return !c.eligible; }).forEach(function (c) { %><option value="<%= c.contractorId %>">✗ <%= c.name %> (ineligible)</option><% }) %>
+        </select>
         <input name="override_reason" placeholder="Override reason (administrators only, for ineligible contractors)">
         <button type="submit" class="secondary">Assign</button></form>
     <% } %>
@@ -42,8 +66,8 @@
 </div>
 <details class="card"><summary>Contractor eligibility (<%= candidates.filter(function (c) { return c.eligible; }).length %> eligible)</summary><div class="table-wrap"><table><tr><th>Contractor</th><th>Eligible</th><th>Reasons</th></tr>
 <% candidates.forEach(function (c) { %><tr><td><a href="/admin/contractors/<%= c.contractorId %>"><%= c.name %></a></td><td><%= c.eligible ? 'Yes' : 'No' %></td><td><small><%= c.reasons.join('; ') %></small></td></tr><% }) %></table></div></details>
-<% if (offers.length) { %><div class="card"><h2>Offers</h2><div class="table-wrap"><table><tr><th>Contractor</th><th>Offered</th><th>Expires</th><th>Status</th></tr>
-<% offers.forEach(function (o) { %><tr><td><%= o.legal_name %></td><td><%= dt(o.offered_at) %></td><td><%= dt(o.expires_at) %></td><td><%- include('../partials/status', { s: o.status }) %><% if (o.decline_reason) { %> – <%= o.decline_reason %><% } %></td></tr><% }) %></table></div></div><% } %>
+<% if (offers.length) { %><div class="card"><h2>Offers (ranked by SLA fit)</h2><div class="table-wrap"><table><tr><th>Wave / rank</th><th>Contractor</th><th>ETA</th><th>Offered</th><th>Expires</th><th>Status</th></tr>
+<% offers.forEach(function (o) { %><tr><td><%= o.wave %> / <%= o.rank || '—' %></td><td><%= o.legal_name %></td><td><%= o.est_arrival_minutes != null ? '~' + o.est_arrival_minutes + ' min' : '—' %><%= o.can_meet_sla === false ? ' ⚠' : '' %></td><td><%= dt(o.offered_at) %></td><td><%= dt(o.expires_at) %></td><td><%- include('../partials/status', { s: o.status }) %><% if (o.decline_reason) { %> – <%= o.decline_reason %><% } %></td></tr><% }) %></table></div></div><% } %>
 <div class="card"><h2>Evidence</h2>
   <div class="photos"><% evidence.forEach(function (e) { %><figure><a href="/files/<%= e.file_id %>" target="_blank" rel="noopener"><img src="/files/<%= e.file_id %>" alt="<%= e.kind %>" loading="lazy" style="<%= e.withdrawn_at ? 'opacity:.35' : '' %>"></a>
     <figcaption><%= humanize(e.kind) %> · server <%= dt(e.uploaded_at) %><% if (e.device_captured_at) { %> · device <%= dt(e.device_captured_at) %><% } %><% if (e.lat) { %> · GPS <%= Number(e.lat).toFixed(4) %>, <%= Number(e.lng).toFixed(4) %><% } %><br><span class="mono">sha256 <%= e.sha256.slice(0, 12) %>…</span>

@@ -11,6 +11,7 @@ import { recheckPendingFunding } from './jobs.js';
 import { type AccountCode, accountPosition, postJournal, prepaidMovement } from './ledger.js';
 import { link, notifyCustomer, notifyStaff } from './notifications.js';
 import { getSettings } from './settings.js';
+import { stripeEnabled } from './stripe.js';
 
 export type PaymentMethod = 'bank_transfer' | 'card' | 'other';
 
@@ -270,9 +271,12 @@ export async function adjustPrepaidBalance(db: Db, actor: Actor, customerId: str
 // Automatic top-ups (explicit customer consent required)
 // ---------------------------------------------------------------------------
 
-export const AUTO_TOPUP_CONSENT_TEXT = (amount: string, trigger: string) =>
-  `I authorise Ridgeline Facilities to request a top-up of ${amount} to our prepaid maintenance account whenever the balance falls below ${trigger}. ` +
-  'I understand I can withdraw this authority at any time from the account page, and that no payment is taken without a payment method I have authorised.';
+export const AUTO_TOPUP_CONSENT_TEXT = (amount: string, trigger: string, card: string | null, merchant = 'LHA Holdings Limited trading as Ridgeline Facilities') =>
+  card
+    ? `I authorise ${merchant} to charge ${amount} to the card saved on this account (currently ${card}) whenever our prepaid maintenance balance falls below ${trigger}, ` +
+      'at most once per day. Each charge is credited to our prepaid balance and shown on our statement. I can withdraw this authority or remove the card at any time from the account page.'
+    : `I authorise ${merchant} to request a top-up of ${amount} to our prepaid maintenance account whenever the balance falls below ${trigger}. ` +
+      'No payment is taken automatically: we will pay each request by bank transfer. I can withdraw this authority at any time from the account page.';
 
 export async function grantAutoTopUpConsent(db: Db, actor: Actor, customerId: string, amountCents: number, triggerBelowCents: number, confirmed: boolean) {
   assertCustomerAccess(actor, customerId);
@@ -280,11 +284,16 @@ export async function grantAutoTopUpConsent(db: Db, actor: Actor, customerId: st
   if (!confirmed) throw new AppError('You must tick the consent box to authorise automatic top-ups');
   if (amountCents < 10000) throw new AppError('Automatic top-ups must be at least $100');
   return tx(db, async (c) => {
+    const card = await maybeOne(c, `SELECT * FROM customer_payment_methods WHERE customer_id = $1 AND status = 'active'`, [customerId]);
+    const company = (await getSettings(c)).company;
+    const text = AUTO_TOPUP_CONSENT_TEXT(formatNzd(amountCents), formatNzd(triggerBelowCents), card ? `${String(card.brand ?? 'card').toUpperCase()} ending ${card.last4}` : null,
+      `${company.legal_name} trading as ${company.trading_name}`);
     await c.query(`UPDATE auto_topup_consents SET revoked_at = now(), revoked_by = $2 WHERE customer_id = $1 AND revoked_at IS NULL`, [customerId, actor.id]);
     const consent = await one(c,
-      `INSERT INTO auto_topup_consents (customer_id, consented_by, amount_cents, trigger_below_cents, consent_text) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [customerId, actor.id, amountCents, triggerBelowCents, AUTO_TOPUP_CONSENT_TEXT(formatNzd(amountCents), formatNzd(triggerBelowCents))]);
-    await audit(c, actor, { action: 'auto_topup.consented', entityType: 'auto_topup_consent', entityId: consent.id, customerId, details: { amountCents, triggerBelowCents } });
+      `INSERT INTO auto_topup_consents (customer_id, consented_by, amount_cents, trigger_below_cents, consent_text, payment_method_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [customerId, actor.id, amountCents, triggerBelowCents, text, card?.id ?? null]);
+    await audit(c, actor, { action: 'auto_topup.consented', entityType: 'auto_topup_consent', entityId: consent.id, customerId,
+      details: { amountCents, triggerBelowCents, card: card ? card.last4 : null } });
     return consent;
   });
 }
@@ -304,13 +313,15 @@ export async function processLowBalances(db: Db): Promise<{ alerts: number; auto
   const settings = await getSettings(db);
   let alerts = 0, autoTopUps = 0;
   const customers = await query(db,
-    `SELECT c.*, a.id AS consent_id, a.amount_cents AS auto_amount, a.trigger_below_cents
+    `SELECT c.*, a.id AS consent_id, a.amount_cents AS auto_amount, a.trigger_below_cents,
+            EXISTS (SELECT 1 FROM customer_payment_methods pm WHERE pm.id = a.payment_method_id AND pm.status = 'active') AS has_card
        FROM customers c LEFT JOIN auto_topup_consents a ON a.customer_id = c.id AND a.revoked_at IS NULL
       WHERE c.status = 'active' AND c.agreed_minimum_balance_cents IS NOT NULL`);
   for (const c of customers) {
     const threshold = Math.round((c.agreed_minimum_balance_cents * settings.low_balance_alert_bps) / 10000);
     const pos = await accountPosition(db, c.id);
-    if (c.consent_id && pos.balanceCents < c.trigger_below_cents) {
+    // Consents with a saved card are charged by processAutoTopUps (when Stripe is configured); others get a payment request.
+    if (c.consent_id && !(c.has_card && stripeEnabled()) && pos.balanceCents < c.trigger_below_cents) {
       const pending = await maybeOne(db, `SELECT 1 FROM customer_payments WHERE customer_id = $1 AND is_auto_topup AND status = 'pending'`, [c.id]);
       if (!pending) {
         const p = await requestPayment(db, SYSTEM_ACTOR, { customerId: c.id, amountCents: c.auto_amount, method: 'bank_transfer', purpose: 'top_up',
@@ -325,7 +336,7 @@ export async function processLowBalances(db: Db): Promise<{ alerts: number; auto
     if (pos.balanceCents < threshold && !recentlyAlerted) {
       await notifyCustomer(db, c.id, { template: 'low_balance', subject: 'Prepaid maintenance balance is low',
         body: `Your prepaid balance is ${formatNzd(pos.balanceCents)}, below your agreed minimum of ${formatNzd(c.agreed_minimum_balance_cents)}. ` +
-          `Please top up at least ${formatNzd(pos.shortfallToMinimumCents)} so routine jobs can continue to be dispatched.\n${link('/app/account')}`,
+          `Please top up at least ${formatNzd(pos.shortfallToMinimumCents)} so P2–P4 jobs can continue to be dispatched.\n${link('/app/account')}`,
         idempotencyKey: `low-balance:${c.id}:${new Date().toISOString().slice(0, 10)}` }, { includeBillingEmail: true });
       await db.query('UPDATE customers SET low_balance_alerted_at = now() WHERE id = $1', [c.id]);
       alerts++;

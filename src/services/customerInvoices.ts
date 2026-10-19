@@ -73,6 +73,11 @@ export async function issueCustomerInvoice(db: Db, actor: Actor, invoiceId: stri
       if (inv.status === 'void') throw new AppError('Invoice is void', 409);
       return inv; // Already issued: idempotent.
     }
+    const settings = await getSettings(c);
+    if (inv.gst_cents > 0 && !settings.company.gst_number?.trim()) {
+      // A tax invoice must show the supplier's GST number; never issue one without it.
+      throw new AppError(`Enter ${settings.company.legal_name}'s GST number in Admin → Settings before issuing GST invoices`, 409, 'gst_number_missing');
+    }
     const job = await lockJob(c, inv.job_id);
     const disputes = await one<{ n: number }>(c, `SELECT COUNT(*)::int AS n FROM disputes WHERE job_id = $1 AND status IN ('open','investigating')`, [job.id]);
     if (disputes.n) throw new AppError('Resolve the open dispute on this job before invoicing', 409);
@@ -238,6 +243,7 @@ export async function createCreditNote(db: Db, actor: Actor, invoiceId: string, 
     await notifyCustomer(c, inv.customer_id, { template: 'credit_note', subject: `Credit note ${cn.credit_note_number}`,
       body: `A credit of ${formatNzd(total)} (incl GST ${formatNzd(gst)}) has been issued against invoice ${inv.invoice_number}: ${input.reason}.\n` +
         `${toPrepaid ? `${formatNzd(toPrepaid)} has been returned to your prepaid balance. ` : ''}${toReceivable ? `${formatNzd(toReceivable)} reduces the amount owing.` : ''}`,
+      attachments: [{ kind: 'credit_note_pdf', id: cn.id, filename: `${cn.credit_note_number}.pdf` }],
       idempotencyKey: `credit-note:${cn.id}` }, { includeBillingEmail: true });
     await audit(c, actor, { action: 'credit_note.issued', entityType: 'credit_note', entityId: cn.id, customerId: inv.customer_id, details: { ...input, total, toPrepaid, toReceivable } });
     return cn;

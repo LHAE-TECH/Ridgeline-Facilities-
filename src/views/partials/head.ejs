@@ -13,7 +13,7 @@
   <% if (actor) { %>
   <nav class="nav" aria-label="Main">
     <% const links = actor.role === 'customer'
-      ? [['/app','Dashboard'],['/app/jobs','Jobs'],['/app/jobs/new','Book a job'],['/app/account','Account'],['/app/invoices','Invoices'],['/app/properties','Properties']].concat(actor.customerRole === 'owner' ? [['/app/users','Contacts']] : [])
+      ? [['/app','Dashboard'],['/app/jobs','Jobs'],['/app/jobs/new','Book a job'],['/app/account','Account'],['/app/invoices','Invoices'],['/app/reports','Reports'],['/app/properties','Properties']].concat(actor.customerRole === 'owner' ? [['/app/users','Contacts']] : [])
       : actor.role === 'contractor'
       ? [['/c','Jobs'],['/c/invoices','Invoices & payments'],['/c/profile','Profile & compliance']]
       : [['/admin','Dashboard'],['/admin/dispatch','Dispatch'],['/admin/jobs','Jobs'],['/admin/customers','Customers'],['/admin/contractors','Contractors'],

@@ -12,7 +12,7 @@ Estimates for a small-to-medium operation (tens of customer accounts, up to a fe
 | Transactional email | Postmark (or Amazon SES) | 10,000 emails | US$15 (≈ NZ$26) | SES is cheaper (about US$0.10 per 1,000) but needs more setup |
 | Domain / DNS | Existing ridgelinefacilities.com | – | Existing cost | Subdomain `app.` costs nothing extra |
 | Off-site backups | Cloudflare R2 / Backblaze B2 | < 10 GB | NZ$0–3 | |
-| **Total required** | | | **≈ NZ$50–75 / month** | |
+| **Total required** | | | **≈ NZ$50–75 / month** | Plus SMS (about NZ$30–50/month at the volume above) once Twilio is enabled |
 
 ## Optional
 
@@ -21,7 +21,7 @@ Estimates for a small-to-medium operation (tens of customer accounts, up to a fe
 | Card top-ups and invoice payments | Stripe | No monthly fee. **2.65% + NZ$0.30** per domestic card payment online (international cards cost more) | Only if you accept cards. A NZ$5,000 deposit by card costs about NZ$132.80, so bank transfer is cheaper for large deposits |
 | Accounting sync | Xero Custom Connection | About **NZ$10/month + GST** | Requires an existing Xero subscription (not included) |
 | Xero subscription | Xero | Your existing plan | Most businesses already have one |
-| SMS notifications | e.g. Twilio / MessageMedia | ≈ NZ$0.10–0.15 per SMS | Not yet integrated; email only today |
+| SMS dispatch and escalation | Twilio | About **US$0.105 per SMS segment** to NZ mobiles (≈ NZ$0.18), plus a NZ number (about US$5–10/month; check Twilio's console) | Needed for after-hours P1 dispatch. Example: 30 P1/P2 jobs a month × 4 offer SMS + confirmations ≈ 150 SMS ≈ NZ$27/month |
 | Contractor payout provider | – | Varies | Not used: payments are made by bank batch export at no extra cost |
 | Error monitoring | Sentry (free tier) | NZ$0 | Recommended once live |
 | Uptime monitoring | UptimeRobot (free tier) | NZ$0 | Monitor `/healthz` |
@@ -37,4 +37,4 @@ Estimates for a small-to-medium operation (tens of customer accounts, up to a fe
 - The system is efficient: one small instance handles hundreds of concurrent users. The database grows mainly with audit and journal rows, which is small (likely under 1 GB for years at this scale).
 - Photos are the main storage cost. 500 jobs/month × 6 photos × 2 MB ≈ 6 GB/month, so move to R2 (about US$0.015/GB/month) once disk usage passes about 20 GB.
 
-Sources: [Render pricing articles](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses), [Render pricing summary](https://kuberns.com/blogs/render-pricing/), [Stripe NZ pricing notice](https://support.stripe.com/questions/lower-pricing-for-new-zealand-card-transactions-effective-starting-december-1-2025), [Xero Custom Connections](https://developer.xero.com/announcements/custom-integrations-are-coming), [Postmark pricing](https://postmarkapp.com/pricing.txt).
+Sources: [Twilio NZ SMS pricing](https://www.twilio.com/en-us/sms/pricing/nz), [Render pricing articles](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses), [Render pricing summary](https://kuberns.com/blogs/render-pricing/), [Stripe NZ pricing notice](https://support.stripe.com/questions/lower-pricing-for-new-zealand-card-transactions-effective-starting-december-1-2025), [Xero Custom Connections](https://developer.xero.com/announcements/custom-integrations-are-coming), [Postmark pricing](https://postmarkapp.com/pricing.txt).

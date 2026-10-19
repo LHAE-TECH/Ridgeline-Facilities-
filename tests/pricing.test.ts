@@ -5,7 +5,7 @@ import { SETTING_DEFAULTS } from '../src/services/settings.js';
 import { classifyTime } from '../src/services/timeWindows.js';
 
 const settings = { gst_rate_bps: 1500, ridgeline_gst_registered: true };
-const ctx = { customerId: 'cust-1', tradeId: 1, tradeIsSpecialist: false, priority: 'routine' as const, standardContractorLabourRateCents: 8000 };
+const ctx = { customerId: 'cust-1', tradeId: 1, tradeIsSpecialist: false, priority: 'standard' as const, standardContractorLabourRateCents: 8000 };
 
 function rule(category: PricingRule['category'], over: Partial<PricingRule> = {}): PricingRule {
   return { id: `${category}-${over.customer_id ?? 'global'}-${over.method ?? 'markup'}`, category, customer_id: null, trade_id: null, priority: null,

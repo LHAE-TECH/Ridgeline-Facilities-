@@ -9,6 +9,7 @@ import { lockJob, recordJobEvent, transitionJob } from './jobState.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
 import { type CostLine, loadApprovedRules, priceCostLines } from './pricing.js';
 import { getSettings } from './settings.js';
+import { evaluateSla } from './sla.js';
 import { type FilePurpose, saveFile } from './storage.js';
 
 export interface GeoInput { lat?: number | null; lng?: number | null; accuracy?: number | null }
@@ -30,8 +31,26 @@ export async function recordArrival(db: Db, actor: Actor, jobId: string, geo: Ge
     if (job.status !== 'assigned') throw new AppError('Arrival can only be recorded for an assigned job', 409);
     const g = cleanGeo(geo);
     await transitionJob(c, actor, job, 'on_site', { eventType: 'arrived', ...g, set: { arrived_at: { sql: 'now()' } } });
+    await evaluateSla(c, jobId);
     await notifyCustomer(c, job.customer_id, { template: 'contractor_arrived', subject: `Contractor on site: ${job.ref}`,
       body: `The contractor has arrived for job ${job.ref}.\n${link(`/app/jobs/${jobId}`)}`, idempotencyKey: `arrived:${jobId}:${Date.now()}` });
+  });
+}
+
+/** P1: the contractor confirms the hazard is made safe (the P1 resolution target). Server timestamp. */
+export async function markMadeSafe(db: Db, actor: Actor, jobId: string, note: string, geo: GeoInput = {}) {
+  if (!note?.trim()) throw new AppError('Describe how the site was made safe');
+  return tx(db, async (c) => {
+    const job = await lockJob(c, jobId);
+    assertAssigned(actor, job);
+    if (job.priority !== 'emergency') throw new AppError('Made safe applies to P1 emergency jobs', 409);
+    if (!['on_site', 'in_progress'].includes(job.status)) throw new AppError('Record arrival before marking the site safe', 409);
+    if (job.made_safe_at) throw new AppError('Already recorded as made safe', 409);
+    await c.query('UPDATE jobs SET made_safe_at = now() WHERE id = $1', [jobId]);
+    await recordJobEvent(c, actor, jobId, 'made_safe', { note, ...cleanGeo(geo) });
+    await evaluateSla(c, jobId);
+    await notifyCustomer(c, job.customer_id, { template: 'made_safe', subject: `Made safe: ${job.ref}`,
+      body: `The contractor has made the site safe for ${job.ref}: ${note}\n${link(`/app/jobs/${jobId}`)}`, idempotencyKey: `made-safe:${jobId}` });
   });
 }
 
@@ -155,6 +174,7 @@ export async function completeJob(db: Db, actor: Actor, jobId: string, input: Co
       note: flags.length ? `Auto-flags: ${flags.map((f) => f.code).join(', ')}` : null,
       set: v.v === 1 ? { completed_at: { sql: 'now()' } } : {},
     });
+    await evaluateSla(c, jobId);
     await notifyStaff(c, ['ops', 'admin'], { template: 'evidence_submitted', subject: `Completion evidence for ${job.ref}`,
       body: `Contractor submitted completion evidence (version ${v.v}) for ${job.ref}.${flags.length ? ` Flags: ${flags.map((f) => f.message).join('; ')}` : ''}\n${link(`/admin/jobs/${jobId}`)}`,
       idempotencyKey: `evidence-submitted:${report.id}` });

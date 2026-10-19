@@ -41,6 +41,12 @@ export const config = {
     secretKey: env.STRIPE_SECRET_KEY ?? '',
     webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? '',
   },
+  sms: {
+    accountSid: env.TWILIO_ACCOUNT_SID ?? '',
+    authToken: env.TWILIO_AUTH_TOKEN ?? '',
+    from: env.TWILIO_FROM_NUMBER ?? '',
+    messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID ?? '',
+  },
   xero: {
     clientId: env.XERO_CLIENT_ID ?? '',
     clientSecret: env.XERO_CLIENT_SECRET ?? '',
@@ -82,7 +88,9 @@ export function integrationStatus(): Record<string, { mode: IntegrationMode; det
     storage: config.storage.driver === 's3'
       ? { mode: 'live', detail: `S3-compatible bucket ${config.storage.s3.bucket}` }
       : { mode: 'live', detail: `Local private disk at ${config.storage.uploadDir}` },
-    sms: { mode: 'unconfigured', detail: 'SMS not yet integrated (email only)' },
+    sms: config.sms.accountSid && config.sms.authToken && (config.sms.from || config.sms.messagingServiceSid)
+      ? { mode: config.sms.accountSid.startsWith('AC') && process.env.TWILIO_TEST_MODE === 'true' ? 'test' : 'live', detail: `Twilio, sender ${config.sms.messagingServiceSid || config.sms.from}` }
+      : { mode: 'unconfigured', detail: 'Twilio credentials not set: SMS offers and escalations are recorded but NOT sent' },
     contractorPayouts: { mode: 'unconfigured', detail: 'No payout provider: payments are made by bank batch export and confirmed manually' },
   };
 }

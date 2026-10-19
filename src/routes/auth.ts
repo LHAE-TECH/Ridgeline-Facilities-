@@ -4,6 +4,8 @@ import { maybeOne, pool, query } from '../db.js';
 import { SYSTEM_ACTOR } from '../lib/actor.js';
 import { AppError } from '../lib/errors.js';
 import { audit } from '../services/audit.js';
+import { getSettings } from '../services/settings.js';
+import { CONTRACTOR_AGREEMENT_VERSION, CUSTOMER_TERMS_VERSION } from '../services/terms.js';
 import { createContractor } from '../services/contractors.js';
 import { CUSTOMER_CATEGORIES, NZ_REGIONS, registerCustomer } from '../services/customers.js';
 import { action, arr, bool, flash, int, optStr, str } from '../web/helpers.js';
@@ -56,13 +58,13 @@ authRouter.post('/logout', (req, res) => {
 authRouter.get('/register', (_req, res) => res.render('register', { categories: CUSTOMER_CATEGORIES }));
 
 authRouter.post('/register', action(async (req) => {
-  if (!bool(req.body.agree)) throw new AppError('Please accept the prepaid account terms and privacy statement');
+  if (!bool(req.body.agree)) throw new AppError('Please accept the customer service agreement and privacy statement');
   if (str(req.body.password) !== str(req.body.password_confirm)) throw new AppError('Passwords do not match');
   const { user } = await registerCustomer(pool, SYSTEM_ACTOR, {
     organisationName: str(req.body.organisation), legalName: optStr(req.body.legal_name), nzbn: optStr(req.body.nzbn), gstNumber: optStr(req.body.gst_number),
     billingEmail: str(req.body.billing_email) || str(req.body.email), phone: optStr(req.body.phone), billingAddress: optStr(req.body.billing_address),
     customerCategory: str(req.body.category), serviceLevel: 'standard', emergencyCover: (str(req.body.emergency_cover) || 'business_hours') as any,
-    contactName: str(req.body.name), contactEmail: str(req.body.email), password: str(req.body.password),
+    contactName: str(req.body.name), contactEmail: str(req.body.email), password: str(req.body.password), termsAccepted: true,
   });
   await new Promise<void>((resolve, reject) => req.session.regenerate((e) => (e ? reject(e) : resolve())));
   req.session.userId = user.id;
@@ -77,14 +79,18 @@ authRouter.get('/contractors/apply', async (_req, res) => {
 
 authRouter.post('/contractors/apply', action(async (req) => {
   if (!bool(req.body.ack)) throw new AppError('Please confirm the independent contractor declaration');
+  if (!bool(req.body.agreement)) throw new AppError('Please accept the contractor agreement');
   await createContractor(pool, SYSTEM_ACTOR, {
     legalName: str(req.body.legal_name), tradingName: optStr(req.body.trading_name), nzbn: optStr(req.body.nzbn), businessAddress: optStr(req.body.address),
-    email: str(req.body.email), phone: optStr(req.body.phone), gstRegistered: bool(req.body.gst_registered), gstNumber: optStr(req.body.gst_number),
+    email: str(req.body.email), phone: optStr(req.body.phone), mobilePhone: optStr(req.body.mobile_phone), gstRegistered: bool(req.body.gst_registered), gstNumber: optStr(req.body.gst_number),
     bankAccountName: optStr(req.body.bank_account_name), bankAccountNumber: optStr(req.body.bank_account_number),
     serviceRegions: arr(req.body.regions), tradeIds: arr(req.body.trades).map((t) => int(t)), afterHoursAvailable: bool(req.body.after_hours),
     emergencyAvailable: bool(req.body.emergency), contactName: str(req.body.contact_name), password: str(req.body.password), independentContractorAck: true,
+    agreementAccepted: true,
   });
   return { redirect: '/login', message: 'Application received. Sign in to upload your insurance and licences; Ridgeline will verify them before offering jobs.' };
 }));
 
-authRouter.get('/privacy', (_req, res) => res.render('privacy'));
+authRouter.get('/privacy', async (_req, res) => res.render('privacy', { company: (await getSettings(pool)).company }));
+authRouter.get('/terms/customer', async (_req, res) => res.render('terms-customer', { company: (await getSettings(pool)).company, version: CUSTOMER_TERMS_VERSION }));
+authRouter.get('/terms/contractor', async (_req, res) => res.render('terms-contractor', { company: (await getSettings(pool)).company, version: CONTRACTOR_AGREEMENT_VERSION }));

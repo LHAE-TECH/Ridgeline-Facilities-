@@ -7,8 +7,9 @@ import { acceptAssessment, latestAssessment, runAssessment } from '../services/a
 import { approveContractorInvoice, getContractorInvoiceForActor, rejectContractorInvoice, validateContractorInvoice } from '../services/contractorInvoices.js';
 import { contractorProfile, createContractor, DOCUMENT_TYPES, reviewComplianceDocument, setContractorTrade, setRateCard, updateContractor, addComplianceDocument } from '../services/contractors.js';
 import { applyPrepaidToInvoice, createCreditNote, getCustomerInvoiceForActor, issueCustomerInvoice, outstandingCents, recalculateDraft } from '../services/customerInvoices.js';
-import { CUSTOMER_CATEGORIES, hashPassword, NZ_REGIONS, portfolio, SERVICE_LEVELS, updateCustomerTerms } from '../services/customers.js';
-import { assessContractorsForJob, dispatchJob, manualAssign, unassign } from '../services/dispatch.js';
+import { CUSTOMER_CATEGORIES, hashPassword, NZ_REGIONS, portfolio, SERVICE_LEVELS, setSiteMetro, updateCustomerTerms } from '../services/customers.js';
+import { assessContractorsForJob, dispatchJob, manualAssign, rankForSla, unassign } from '../services/dispatch.js';
+import { PRIORITY_META, reclassifyPriority, slaLegState, TRIAGE_QUESTIONS } from '../services/sla.js';
 import { raiseDispute, resolveDispute, setDisputeInvestigating } from '../services/disputes.js';
 import { reviewEvidence, reviewQuote, withdrawEvidence } from '../services/evidence.js';
 import { cancelJob, closeChecks, closeJob, getJobForActor, grantFundingException } from '../services/jobs.js';
@@ -71,7 +72,8 @@ adminRouter.get('/customers/:id', async (req, res) => {
     query(pool, `SELECT * FROM refunds WHERE customer_id = $1 ORDER BY created_at DESC`, [customer.id]),
     maybeOne(pool, `SELECT * FROM auto_topup_consents WHERE customer_id = $1 AND revoked_at IS NULL`, [customer.id]),
   ]);
-  res.render('admin/customer', { customer, ...data, position, assessment, txns, payments, jobs, users, invoices, recon, refunds, consent,
+  const card = await maybeOne(pool, `SELECT * FROM customer_payment_methods WHERE customer_id = $1 AND status = 'active'`, [customer.id]);
+  res.render('admin/customer', { customer, ...data, position, assessment, txns, payments, jobs, users, invoices, recon, refunds, consent, card,
     categories: CUSTOMER_CATEGORIES, levels: SERVICE_LEVELS, key: newKey(), outstandingCents });
 });
 
@@ -130,7 +132,15 @@ adminRouter.get('/dispatch', async (_req, res) => {
        FROM jobs j JOIN customers c ON c.id = j.customer_id JOIN sites s ON s.id = j.site_id JOIN trades t ON t.id = j.trade_id
        LEFT JOIN contractors k ON k.id = j.assigned_contractor_id
       WHERE j.status IN ('pending_funds','awaiting_customer_approval','dispatch','offered','assigned','on_site','in_progress','evidence_submitted','evidence_rejected')
-      ORDER BY j.priority = 'emergency' DESC, j.priority = 'urgent' DESC, j.respond_by`);
+      ORDER BY j.sla_onsite_due NULLS LAST`);
+  const settings = await getSettings(pool);
+  for (const j of jobs) {
+    j.onsite = slaLegState(j.sla_onsite_due, j.sla_started_at, j.arrived_at, settings.sla_at_risk_bps);
+    j.resolve = slaLegState(j.sla_resolve_due, j.sla_started_at, j.made_safe_at ?? j.completed_at, settings.sla_at_risk_bps);
+    j.current = j.arrived_at ? j.resolve : j.onsite;
+  }
+  // Highest SLA risk first (breached, then the largest share of the window elapsed).
+  jobs.sort((a, b) => (b.current.riskRatio ?? 0) - (a.current.riskRatio ?? 0));
   const columns: [string, string[]][] = [
     ['On hold', ['pending_funds', 'awaiting_customer_approval']], ['Awaiting dispatch', ['dispatch']], ['Offered', ['offered']],
     ['Assigned', ['assigned']], ['On site / in progress', ['on_site', 'in_progress']], ['Evidence review', ['evidence_submitted', 'evidence_rejected']],
@@ -143,7 +153,7 @@ adminRouter.get('/jobs/:id', async (req, res) => {
   const job = await getJobForActor(pool, a, pid(req));
   const [events, offers, evidence, reports, quotes, contractorInvoices, customerInvoice, disputes, candidates, checks, commitment, auditRows] = await Promise.all([
     query(pool, `SELECT e.*, u.name AS actor_name FROM job_events e LEFT JOIN users u ON u.id = e.actor_id WHERE e.job_id = $1 ORDER BY e.id`, [job.id]),
-    query(pool, `SELECT o.*, k.legal_name FROM job_offers o JOIN contractors k ON k.id = o.contractor_id WHERE o.job_id = $1 ORDER BY o.offered_at DESC`, [job.id]),
+    query(pool, `SELECT o.*, k.legal_name FROM job_offers o JOIN contractors k ON k.id = o.contractor_id WHERE o.job_id = $1 ORDER BY o.wave DESC, o.rank`, [job.id]),
     query(pool, `SELECT e.*, f.sha256, f.original_name FROM job_evidence e JOIN files f ON f.id = e.file_id WHERE e.job_id = $1 ORDER BY e.uploaded_at`, [job.id]),
     query(pool, `SELECT * FROM completion_reports WHERE job_id = $1 ORDER BY version DESC`, [job.id]),
     query(pool, `SELECT * FROM quotes WHERE job_id = $1 ORDER BY created_at`, [job.id]),
@@ -155,12 +165,27 @@ adminRouter.get('/jobs/:id', async (req, res) => {
     maybeOne(pool, `SELECT * FROM job_commitments WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1`, [job.id]),
     query(pool, `SELECT a.*, u.name AS actor_name FROM audit_log a LEFT JOIN users u ON u.id = a.actor_id WHERE a.entity_type = 'job' AND a.entity_id = $1 ORDER BY a.id`, [job.id]),
   ]);
-  res.render('admin/job', { job, events, offers, evidence, reports, quotes, contractorInvoices, customerInvoice, disputes, candidates, checks, commitment, auditRows });
+  const settings = await getSettings(pool);
+  const ranked = rankForSla(candidates.filter((c) => c.eligible), job.sla_onsite_due ? Math.round((new Date(job.sla_onsite_due).getTime() - Date.now()) / 60000) : null);
+  const sla = {
+    onsite: slaLegState(job.sla_onsite_due, job.sla_started_at, job.arrived_at, settings.sla_at_risk_bps),
+    resolve: slaLegState(job.sla_resolve_due, job.sla_started_at, job.made_safe_at ?? job.completed_at, settings.sla_at_risk_bps),
+  };
+  res.render('admin/job', { job, events, offers, evidence, reports, quotes, contractorInvoices, customerInvoice, disputes, candidates, ranked, checks, commitment, auditRows,
+    sla, priorityMeta: PRIORITY_META, triageQuestions: TRIAGE_QUESTIONS });
 });
 
 adminRouter.post('/jobs/:id/dispatch', action(async (req) => {
   const r = await dispatchJob(pool, actor(req), pid(req));
-  return { redirect: `/admin/jobs/${pid(req)}`, message: `${r.offered} new offer(s) sent; ${r.eligible} eligible contractor(s)` };
+  return { redirect: `/admin/jobs/${pid(req)}`, message: r.offered ? `Wave ${r.wave}: ${r.offered} offer(s) sent (${r.eligible} eligible contractor(s))` : `No further eligible contractors to offer (${r.eligible} eligible in total)` };
+}));
+adminRouter.post('/jobs/:id/priority', action(async (req) => {
+  await reclassifyPriority(pool, actor(req), pid(req), str(req.body.priority) as any, str(req.body.reason));
+  return { redirect: `/admin/jobs/${pid(req)}`, message: 'Priority reclassified and SLA targets recalculated' };
+}));
+adminRouter.post('/sites/:id/metro', action(async (req) => {
+  const site = await setSiteMetro(pool, actor(req), pid(req), bool(req.body.is_metro));
+  return { redirect: str(req.body.back) || `/admin/customers/${site.customer_id}`, message: `Site marked ${site.is_metro ? 'metro' : 'non-metro'} (applies to jobs released from now)` };
 }));
 adminRouter.post('/jobs/:id/assign', action(async (req) => {
   await manualAssign(pool, actor(req), pid(req), str(req.body.contractor_id), optStr(req.body.override_reason));
@@ -216,7 +241,7 @@ adminRouter.get('/contractors/new', async (_req, res) => {
 adminRouter.post('/contractors', action(async (req) => {
   const c = await createContractor(pool, actor(req), {
     legalName: str(req.body.legal_name), tradingName: optStr(req.body.trading_name), nzbn: optStr(req.body.nzbn), businessAddress: optStr(req.body.address),
-    email: str(req.body.email), phone: optStr(req.body.phone), gstRegistered: bool(req.body.gst_registered), gstNumber: optStr(req.body.gst_number),
+    email: str(req.body.email), phone: optStr(req.body.phone), mobilePhone: optStr(req.body.mobile_phone), gstRegistered: bool(req.body.gst_registered), gstNumber: optStr(req.body.gst_number),
     bankAccountName: optStr(req.body.bank_account_name), bankAccountNumber: optStr(req.body.bank_account_number), paymentTermsDays: optInt(req.body.payment_terms_days),
     serviceRegions: arr(req.body.regions), tradeIds: arr(req.body.trades).map((t) => int(t)), afterHoursAvailable: bool(req.body.after_hours),
     emergencyAvailable: bool(req.body.emergency), maxConcurrentJobs: optInt(req.body.max_concurrent_jobs), contactName: str(req.body.contact_name), password: str(req.body.password),
@@ -235,6 +260,7 @@ adminRouter.get('/contractors/:id', async (req, res) => {
 adminRouter.post('/contractors/:id', action(async (req) => {
   await updateContractor(pool, actor(req), pid(req), {
     legalName: optStr(req.body.legal_name), tradingName: optStr(req.body.trading_name), nzbn: optStr(req.body.nzbn), phone: optStr(req.body.phone),
+    mobilePhone: str(req.body.mobile_phone),
     gstRegistered: bool(req.body.gst_registered), gstNumber: optStr(req.body.gst_number) ?? '', paymentTermsDays: optInt(req.body.payment_terms_days),
     serviceRegions: arr(req.body.regions), serviceRadiusKm: optInt(req.body.service_radius_km), afterHoursAvailable: bool(req.body.after_hours),
     emergencyAvailable: bool(req.body.emergency), maxConcurrentJobs: optInt(req.body.max_concurrent_jobs), available: bool(req.body.available),
@@ -481,6 +507,7 @@ adminRouter.post('/settings', action(async (req) => {
   const a = actor(req);
   const current = await getSettings(pool);
   for (const key of Object.keys(SETTING_DEFAULTS) as SettingKey[]) {
+    if (key === 'company' || key === 'ridgeline_gst_registered') continue; // edited in the company form
     const raw = req.body[`s_${key}`];
     if (raw === undefined) continue;
     const def = SETTING_DEFAULTS[key] as unknown;
@@ -491,6 +518,23 @@ adminRouter.post('/settings', action(async (req) => {
     if (JSON.stringify(value) !== JSON.stringify(current[key])) await updateSetting(pool, a, key, value);
   }
   return { redirect: '/admin/settings', message: 'Settings saved' };
+}));
+
+adminRouter.post('/settings/company', action(async (req) => {
+  requireAdmin(req);
+  const current = (await getSettings(pool)).company;
+  const gst = str(req.body.gst_number).replace(/[\s-]/g, '');
+  if (gst && !/^\d{8,9}$/.test(gst)) throw new AppError('GST number must be 8 or 9 digits (IRD number)');
+  const nzbn = str(req.body.nzbn).replace(/\s/g, '');
+  if (nzbn && !/^94\d{11}$/.test(nzbn)) throw new AppError('NZBN must be 13 digits starting with 94');
+  const legal = str(req.body.legal_name);
+  if (!legal) throw new AppError('Legal name is required');
+  const fmtGst = gst ? (gst.length === 8 ? `${gst.slice(0, 2)}-${gst.slice(2, 5)}-${gst.slice(5)}` : `${gst.slice(0, 3)}-${gst.slice(3, 6)}-${gst.slice(6)}`) : '';
+  await updateSetting(pool, actor(req), 'company', { ...current, legal_name: legal, trading_name: str(req.body.trading_name) || 'Ridgeline Facilities',
+    name: str(req.body.trading_name) || 'Ridgeline Facilities', nzbn, gst_number: fmtGst, address: str(req.body.address), email: str(req.body.email),
+    phone: str(req.body.phone), website: str(req.body.website), bank_account_name: str(req.body.bank_account_name), bank_account_number: str(req.body.bank_account_number) });
+  await updateSetting(pool, actor(req), 'ridgeline_gst_registered', bool(req.body.gst_registered));
+  return { redirect: '/admin/settings#company', message: 'Company and GST details saved' };
 }));
 
 adminRouter.post('/facility-types/:id', action(async (req) => {

@@ -1,6 +1,7 @@
 import type { Db } from '../db.js';
 import { one, query } from '../db.js';
 import { accountBalances } from './ledger.js';
+import { openSlaJobs, slaPerformance } from './sla.js';
 
 /**
  * Operations dashboard figures. Customer prepaid balances are a LIABILITY and are reported separately from
@@ -21,8 +22,11 @@ export async function dashboard(db: Db, period: { from: string; to: string }) {
   const lowBalance = await query(db, `SELECT id, name, account_ref, prepaid_balance_cents, agreed_minimum_balance_cents FROM customers
     WHERE status = 'active' AND agreed_minimum_balance_cents IS NOT NULL AND prepaid_balance_cents < agreed_minimum_balance_cents ORDER BY name LIMIT 20`);
   const jobs = Object.fromEntries((await query(db, `SELECT status, COUNT(*)::int AS n FROM jobs GROUP BY status`)).map((r) => [r.status, r.n]));
-  const overdue = await query(db, `SELECT id, ref, priority, status, respond_by, attend_by FROM jobs
-    WHERE (status IN ('dispatch','offered') AND respond_by < now()) OR (status = 'assigned' AND attend_by < now()) ORDER BY attend_by LIMIT 20`);
+  const overdue = (await openSlaJobs(db)).slice(0, 25);
+  const sla = await slaPerformance(db, period);
+  const breaches = await one(db, `SELECT COUNT(*) FILTER (WHERE sla_onsite_breached_at IS NOT NULL OR sla_resolve_breached_at IS NOT NULL)::int AS breached,
+      COUNT(*) FILTER (WHERE escalation_level > 0)::int AS escalated
+    FROM jobs WHERE status <> 'cancelled' AND (sla_started_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $1::date AND $2::date`, [period.from, period.to]);
   const ci = await one(db, `SELECT COUNT(*) FILTER (WHERE status IN ('submitted','flagged'))::int AS awaiting, COUNT(*) FILTER (WHERE status = 'flagged')::int AS flagged FROM contractor_invoices`);
   const custInv = await one(db, `SELECT COUNT(*) FILTER (WHERE status = 'draft')::int AS drafts,
       COUNT(*) FILTER (WHERE status <> 'draft' AND status <> 'void' AND issue_date BETWEEN $1 AND $2)::int AS issued_in_period,
@@ -87,6 +91,8 @@ export async function dashboard(db: Db, period: { from: string; to: string }) {
       byStatus: jobs,
     },
     overdue,
+    sla,
+    slaBreaches: breaches,
     contractorInvoices: ci,
     customerInvoices: custInv,
     payables: { ...payables, paidInPeriod: paid.v, paidCountInPeriod: paid.n },

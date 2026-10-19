@@ -1,13 +1,15 @@
 <%- include('../partials/head', { title: 'Dispatch board' }) %>
-<div class="page-head"><h1>Dispatch board</h1><small>Emergency and urgent jobs first. Red border = emergency.</small></div>
+<div class="page-head"><h1>Dispatch board</h1><small>Ordered by SLA risk (share of the SLA window used). Red border = P1, amber = P2.</small></div>
 <div class="board">
 <% columns.forEach(function (col) { %>
   <div class="col"><h2><%= col.title %> (<%= col.jobs.length %>)</h2>
-  <% col.jobs.forEach(function (j) { const late = (['dispatch','offered'].includes(j.status) && j.respond_by && new Date(j.respond_by) < now) || (j.status === 'assigned' && j.attend_by && new Date(j.attend_by) < now); %>
-    <a class="job-card <%= j.priority %>" href="/admin/jobs/<%= j.id %>"><strong><%= j.ref %></strong> <% if (late) { %><span class="badge err">SLA breached</span><% } %><br>
+  <% col.jobs.forEach(function (j) { const st = j.current.state; %>
+    <a class="job-card <%= j.priority %>" href="/admin/jobs/<%= j.id %>"><strong><%= j.ref %></strong> <span class="badge"><%= prio(j.priority).split(' ')[0] %></span>
+      <% if (st !== 'not_started') { %><span class="badge <%= st === 'breached' || st === 'missed' ? 'err' : st === 'at_risk' ? 'warn' : 'ok' %>"><%= slaBadge(j.current) %></span><% } %><br>
       <small><%= j.title %><br><%= j.customer_name %> · <%= j.region %> · <%= j.trade_name %><br>
-      <% if (j.status === 'offered') { %><%= j.live_offers %> live offer(s)<% } else if (j.contractor_name) { %><%= j.contractor_name %><% } %>
-      <% if (['dispatch','offered'].includes(j.status)) { %> · respond by <%= dt(j.respond_by) %><% } else if (j.status === 'assigned') { %> · attend by <%= dt(j.attend_by) %><% } %></small></a>
+      <% if (j.status === 'offered') { %>Wave <%= j.dispatch_wave %> · <%= j.live_offers %> live offer(s)<% } else if (j.contractor_name) { %><%= j.contractor_name %><% } %>
+      <% if (j.sla_onsite_due && !j.arrived_at) { %> · on site by <%= dt(j.sla_onsite_due) %><% } else if (j.sla_resolve_due) { %> · resolve by <%= dt(j.sla_resolve_due) %><% } %>
+      <% if (j.escalation_level) { %> · <strong>escalated</strong><% } %></small></a>
   <% }) %></div>
 <% }) %>
 </div>

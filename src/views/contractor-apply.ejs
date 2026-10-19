@@ -1,7 +1,7 @@
 <%- include('partials/head', { title: 'Contractor application' }) %>
 <div class="card" style="max-width:820px;margin:0 auto">
   <h1>Join the Ridgeline contractor network</h1>
-  <p class="muted">You invoice Ridgeline Facilities directly for approved work at your agreed rates. After applying, sign in to upload insurance and licences for verification.</p>
+  <p class="muted">You invoice <%= company.legal_name %> (trading as <%= company.trading_name %>) directly for approved work at your agreed rates. After applying, sign in to upload insurance and licences for verification.</p>
   <form method="post" action="/contractors/apply" class="stack">
     <%- include('partials/csrf') %>
     <div class="grid-2">
@@ -11,6 +11,8 @@
       <div><label>Business address</label><input name="address"></div>
       <div><label>Contact name</label><input name="contact_name" required></div>
       <div><label>Phone</label><input name="phone" type="tel" required></div>
+      <div><label>Mobile for SMS job offers</label><input name="mobile_phone" type="tel" placeholder="021 555 0199"></div>
+      <div></div>
       <div><label>Email (login)</label><input name="email" type="email" required></div>
       <div><label>Password (10+ characters)</label><input name="password" type="password" minlength="10" required></div>
     </div>
@@ -28,6 +30,7 @@
     <label class="check"><input type="checkbox" name="after_hours"> Available after hours and weekends</label>
     <label class="check"><input type="checkbox" name="emergency"> Available for emergency callouts</label>
     <label class="check"><input type="checkbox" name="ack" required> I operate as an independent contractor in my own business, hold the insurance and licences required for my trades, and am responsible for my own tax and health &amp; safety obligations.</label>
+    <label class="check"><input type="checkbox" name="agreement" required> I have read and accept the <a href="/terms/contractor" target="_blank">contractor agreement</a> with <%= company.legal_name %> trading as <%= company.trading_name %>.</label>
     <button type="submit">Submit application</button>
   </form>
 </div>

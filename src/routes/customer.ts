@@ -6,11 +6,13 @@ import { getCustomerInvoiceForActor } from '../services/customerInvoices.js';
 import { addCustomerUser, addFacility, addSite, addUnits, NZ_REGIONS, portfolio } from '../services/customers.js';
 import { raiseDispute } from '../services/disputes.js';
 import { addBookingPhotos, customerDecideQuote } from '../services/evidence.js';
-import { approveJobAsCustomer, cancelJob, createBooking, estimateJob, getJobForActor, PRIORITIES } from '../services/jobs.js';
+import { approveJobAsCustomer, cancelJob, createBooking, estimateJob, getJobForActor, PRIORITIES, resolvePriority } from '../services/jobs.js';
 import { JOB_STATUS_LABELS } from '../services/jobState.js';
 import { accountPosition } from '../services/ledger.js';
 import { AUTO_TOPUP_CONSENT_TEXT, grantAutoTopUpConsent, requestPayment, requestRefund, revokeAutoTopUpConsent } from '../services/payments.js';
-import { completionReportPdf, customerInvoicePdf, statementPdf } from '../services/pdf.js';
+import { completionReportPdf, customerInvoicePdf, monthlyReportPdf, statementPdf } from '../services/pdf.js';
+import { createCardSetupCheckout, describeCard, removeCard, savedCard } from '../services/autoTopUp.js';
+import { PRIORITY_META, TRIAGE_QUESTIONS, slaPerformance } from '../services/sla.js';
 import { getSettings } from '../services/settings.js';
 import { createCheckout, stripeEnabled } from '../services/stripe.js';
 import { action, actor, bool, dollars, flash, int, localDateTime, multipart, newKey, optDollars, optStr, requireRole, str, uploadedFiles , pid } from '../web/helpers.js';
@@ -90,8 +92,11 @@ customerRouter.get('/account', async (req, res) => {
       COALESCE(SUM(amount_cents) FILTER (WHERE txn_type IN ('refund','adjustment','credit_note','reversal')),0)::bigint AS adjustments,
       (SELECT amount_cents FROM prepaid_transactions WHERE customer_id = $1 AND txn_type = 'deposit' ORDER BY created_at LIMIT 1) AS opening
     FROM prepaid_transactions WHERE customer_id = $1`, [customerId]);
-  res.render('customer/account', { customer, position, txns, payments, commitments, consent, refunds, company: settings.company, totals,
-    stripe: stripeEnabled(), consentText: AUTO_TOPUP_CONSENT_TEXT('{amount}', '{threshold}'), paymentStatus: req.query.payment ?? null, key: newKey() });
+  const card = await savedCard(pool, customerId);
+  const merchant = `${settings.company.legal_name} trading as ${settings.company.trading_name}`;
+  res.render('customer/account', { customer, position, txns, payments, commitments, consent, refunds, company: settings.company, totals, card,
+    stripe: stripeEnabled(), consentText: AUTO_TOPUP_CONSENT_TEXT('the amount above', 'the threshold above', card ? describeCard(card) : null, merchant),
+    paymentStatus: req.query.payment ?? null, cardStatus: req.query.card ?? null, key: newKey(), maxFailures: settings.auto_topup_max_failures });
 });
 
 customerRouter.post('/topups', action(async (req, res) => {
@@ -104,6 +109,16 @@ customerRouter.post('/topups', action(async (req, res) => {
   }
   const p = await requestPayment(pool, a, { customerId: cid(req), amountCents: amount, method: 'bank_transfer', idempotencyKey: `topup:${str(req.body.key) || newKey()}` });
   return { redirect: '/app/account', message: `Top-up request ${p.reference} created for ${formatNzd(p.amount_cents)}. Pay by bank transfer using reference ${p.reference}; your balance updates when Ridgeline confirms receipt.` };
+}));
+
+customerRouter.post('/cards/setup', action(async (req, res) => {
+  const url = await createCardSetupCheckout(pool, actor(req), cid(req));
+  res.redirect(303, url);
+}));
+
+customerRouter.post('/cards/remove', action(async (req) => {
+  await removeCard(pool, actor(req), cid(req));
+  return { redirect: '/app/account', message: 'Saved card removed. Automatic top-ups will be requested by bank transfer instead.' };
 }));
 
 customerRouter.post('/auto-topup', action(async (req) => {
@@ -142,7 +157,7 @@ async function bookingFormData(customerId: string) {
   const units = await query(pool, 'SELECT u.*, f.site_id FROM units u JOIN facilities f ON f.id = u.facility_id WHERE u.customer_id = $1 ORDER BY u.label', [customerId]);
   const trades = await query(pool, 'SELECT * FROM trades WHERE is_active ORDER BY name');
   const customer = await one(pool, 'SELECT * FROM customers WHERE id = $1', [customerId]);
-  return { sites, facilities, units, trades, customer, priorities: PRIORITIES };
+  return { sites, facilities, units, trades, customer, priorities: PRIORITIES, priorityMeta: PRIORITY_META, triageQuestions: TRIAGE_QUESTIONS };
 }
 
 customerRouter.get('/jobs/new', async (req, res) => {
@@ -153,7 +168,9 @@ customerRouter.get('/jobs/new', async (req, res) => {
 function bookingInput(req: any) {
   return {
     customerId: cid(req), siteId: str(req.body.site_id), facilityId: str(req.body.facility_id) || null, unitId: str(req.body.unit_id) || null,
-    tradeId: int(req.body.trade_id, 'Job category'), priority: str(req.body.priority) as any, title: str(req.body.title), description: str(req.body.description),
+    tradeId: int(req.body.trade_id, 'Job category'), priority: (str(req.body.priority) || null) as any,
+    triage: { safetyRisk: str(req.body.triage_safety) === 'yes', preventsUse: str(req.body.triage_use) === 'yes', planned: str(req.body.triage_planned) === 'yes' },
+    title: str(req.body.title), description: str(req.body.description),
     accessInstructions: optStr(req.body.access_instructions), siteContactName: optStr(req.body.site_contact_name), siteContactPhone: optStr(req.body.site_contact_phone),
     preferredStart: localDateTime(req.body.preferred_start), preferredEnd: localDateTime(req.body.preferred_end), poNumber: optStr(req.body.po_number),
     idempotencyKey: str(req.body.key) || undefined,
@@ -166,7 +183,8 @@ customerRouter.post('/jobs', ...multipart('photos', 6), async (req, res, next) =
   try {
     const input = bookingInput(req);
     if (str(req.body.intent) === 'estimate') {
-      const estimate = await estimateJob(pool, input);
+      const { priority } = resolvePriority(input.priority, input.triage);
+      const estimate = await estimateJob(pool, { ...input, priority });
       return res.render('customer/job-new', { ...(await bookingFormData(cid(req))), form: req.body, key: str(req.body.key) || newKey(), estimate,
         position: await accountPosition(pool, cid(req)) });
     }
@@ -260,6 +278,22 @@ customerRouter.post('/invoices/:id/pay', action(async (req, res) => {
   const url = await createCheckout(pool, actor(req), { customerId: cid(req), amountCents: outstanding, customerInvoiceId: invoice.id, idempotencyKey: `inv-checkout:${str(req.body.key)}` });
   res.redirect(303, url);
 }));
+
+// ---- Monthly reports ----
+customerRouter.get('/reports', async (req, res) => {
+  const months = await query<{ m: string }>(pool, `SELECT DISTINCT to_char(created_at AT TIME ZONE 'Pacific/Auckland', 'YYYY-MM') AS m FROM jobs WHERE customer_id = $1 ORDER BY m DESC LIMIT 24`, [cid(req)]);
+  const month = /^\d{4}-\d{2}$/.test(str(req.query.month)) ? str(req.query.month) : months[0]?.m ?? new Date().toISOString().slice(0, 7);
+  const end = new Date(`${month}-01T00:00:00Z`); end.setUTCMonth(end.getUTCMonth() + 1); end.setUTCDate(0);
+  const sla = await slaPerformance(pool, { from: `${month}-01`, to: end.toISOString().slice(0, 10) }, cid(req));
+  res.render('customer/reports', { months: months.map((x) => x.m), month, sla });
+});
+
+customerRouter.get('/reports/:month.pdf', async (req, res) => {
+  const month = String(req.params.month);
+  const pdf = await monthlyReportPdf(pool, cid(req), month);
+  res.type('application/pdf').setHeader('Content-Disposition', `inline; filename="ridgeline-report-${month}.pdf"`);
+  res.send(pdf);
+});
 
 // ---- Users (booking contacts) ----
 customerRouter.get('/users', async (req, res) => {

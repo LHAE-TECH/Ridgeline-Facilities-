@@ -6,9 +6,10 @@ import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { audit } from './audit.js';
 import { DOCUMENT_TYPES } from './contractors.js';
 import { lockJob, recordJobEvent, transitionJob } from './jobState.js';
-import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
+import { link, notifyContractor, notifyCustomer, notifyStaff, smsContractor } from './notifications.js';
+import { priorityLabel, smsEscalationPhones } from './sla.js';
 import { getSettings } from './settings.js';
-import { classifyTime, loadHolidays } from './timeWindows.js';
+import { classifyTime, loadHolidays, localParts } from './timeWindows.js';
 
 export interface ContractorAssessment {
   contractorId: string;
@@ -17,6 +18,11 @@ export interface ContractorAssessment {
   reasons: string[];
   activeJobs: number;
   distanceKm: number | null;
+  /** Estimated minutes to reach site: travel (distance ÷ speed, or a default) plus a penalty per active job. */
+  estArrivalMinutes: number;
+  /** Share of this contractor's measured on-site SLAs met over the last 180 days (null = no history). */
+  onTimeRate: number | null;
+  hasMobile: boolean;
 }
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -48,6 +54,8 @@ export async function assessContractorsForJob(db: Db, jobId: string): Promise<Co
             (SELECT COUNT(*) FROM jobs aj WHERE aj.assigned_contractor_id = c.id AND aj.status IN ('assigned','on_site','in_progress'))::int AS active_jobs,
             EXISTS (SELECT 1 FROM contractor_rate_cards r WHERE r.contractor_id = c.id AND r.trade_id = $1 AND r.status = 'approved'
                      AND r.effective_from <= CURRENT_DATE AND (r.effective_to IS NULL OR r.effective_to >= CURRENT_DATE)) AS has_rate_card,
+            (SELECT COUNT(*) FILTER (WHERE hj.sla_onsite_met IS NOT NULL) FROM jobs hj WHERE hj.assigned_contractor_id = c.id AND hj.sla_started_at > now() - interval '180 days')::int AS sla_measured,
+            (SELECT COUNT(*) FILTER (WHERE hj.sla_onsite_met) FROM jobs hj WHERE hj.assigned_contractor_id = c.id AND hj.sla_started_at > now() - interval '180 days')::int AS sla_met,
             COALESCE((SELECT array_agg(DISTINCT d.doc_type) FROM compliance_documents d WHERE d.contractor_id = c.id AND d.status = 'verified'
                        AND (d.expires_at IS NULL OR d.expires_at >= CURRENT_DATE)), '{}') AS valid_docs
        FROM contractors c LEFT JOIN contractor_trades ct ON ct.contractor_id = c.id AND ct.trade_id = $1
@@ -70,36 +78,97 @@ export async function assessContractorsForJob(db: Db, jobId: string): Promise<Co
     if (!c.available) reasons.push('Marked unavailable');
     if (c.active_jobs >= c.max_concurrent_jobs) reasons.push(`At capacity (${c.active_jobs}/${c.max_concurrent_jobs} active jobs)`);
     if (job.priority === 'emergency' && !c.emergency_available) reasons.push('Not available for emergency response');
+    if (job.priority === 'emergency' && !c.mobile_phone) reasons.push('No mobile number for SMS emergency dispatch');
     if (window !== 'standard' && !c.after_hours_available) reasons.push('Not available outside standard hours');
     for (const d of requiredDocs) {
       if (!(c.valid_docs ?? []).includes(d)) reasons.push(`Missing or expired: ${DOCUMENT_TYPES[d] ?? d}`);
     }
-    return { contractorId: c.id, name: c.trading_name || c.legal_name, eligible: reasons.length === 0, reasons, activeJobs: c.active_jobs, distanceKm };
+    const travel = distanceKm !== null ? Math.round((distanceKm / Math.max(1, settings.travel_speed_kmh)) * 60) : settings.unknown_travel_minutes;
+    return {
+      contractorId: c.id, name: c.trading_name || c.legal_name, eligible: reasons.length === 0, reasons, activeJobs: c.active_jobs, distanceKm,
+      estArrivalMinutes: travel + c.active_jobs * settings.load_penalty_minutes,
+      onTimeRate: c.sla_measured > 0 ? c.sla_met / c.sla_measured : null,
+      hasMobile: Boolean(c.mobile_phone),
+    };
   });
 }
 
-/** Sends offers to every eligible contractor not already offered. Returns the number of new offers. */
-export async function dispatchJob(db: Db, actor: Actor, jobId: string): Promise<{ offered: number; eligible: number }> {
+/**
+ * Orders contractors by their likelihood of meeting the job's on-site SLA: first those whose estimated arrival
+ * fits the time remaining, then by estimated arrival adjusted for their on-time record (no history counts as 80%).
+ */
+export function rankForSla(candidates: ContractorAssessment[], remainingMinutes: number | null): (ContractorAssessment & { canMeet: boolean })[] {
+  return candidates
+    .map((a) => ({ ...a, canMeet: remainingMinutes === null || a.estArrivalMinutes <= remainingMinutes }))
+    .sort((a, b) => {
+      if (a.canMeet !== b.canMeet) return a.canMeet ? -1 : 1;
+      const score = (x: ContractorAssessment) => x.estArrivalMinutes + (1 - (x.onTimeRate ?? 0.8)) * 60;
+      return score(a) - score(b);
+    });
+}
+
+function offerNeedsSms(priority: string, settings: Awaited<ReturnType<typeof getSettings>>, holidays: Set<string>): boolean {
+  if (settings.sms_offer_priorities.includes(priority)) return true;
+  if (!settings.sms_offers_outside_business_hours) return false;
+  const p = localParts(new Date(), settings.timezone);
+  const open = settings.sla_business_hours;
+  const toMin = (t: string) => Number(t.split(':')[0]) * 60 + Number(t.split(':')[1] ?? 0);
+  const businessNow = open.days.includes(p.weekday) && !holidays.has(p.date) && p.minutes >= toMin(open.start) && p.minutes < toMin(open.end);
+  return !businessNow;
+}
+
+/**
+ * Offers the job to the next wave of eligible contractors, ranked by SLA fit (see rankForSla). P1 offers every
+ * contractor who can make the on-site target at once; other priorities go to the best few first and widen in
+ * later waves (advanceDispatchWaves). Offers are emailed, and also sent by SMS for P1/P2 and outside business hours.
+ */
+export async function dispatchJob(db: Db, actor: Actor, jobId: string): Promise<{ offered: number; eligible: number; wave: number }> {
   return tx(db, async (c) => {
     const job = await lockJob(c, jobId);
     if (!['dispatch', 'offered'].includes(job.status)) throw new AppError('Job is not awaiting dispatch', 409);
     const settings = await getSettings(c);
-    const assessments = (await assessContractorsForJob(c, jobId)).filter((a) => a.eligible);
+    const holidays = await loadHolidays(c);
+    const eligible = (await assessContractorsForJob(c, jobId)).filter((a) => a.eligible);
     const previous = await query<{ contractor_id: string }>(c,
-      `SELECT contractor_id FROM job_offers WHERE job_id = $1 AND status IN ('offered','declined')`, [jobId]);
+      `SELECT contractor_id FROM job_offers WHERE job_id = $1 AND status IN ('offered','declined','expired')`, [jobId]);
     const skip = new Set(previous.map((p) => p.contractor_id));
+    const remaining = job.sla_onsite_due ? Math.round((new Date(job.sla_onsite_due).getTime() - Date.now()) / 60000) : null;
+    const ranked = rankForSla(eligible.filter((a) => !skip.has(a.contractorId)), remaining);
+    const size = settings.dispatch_wave_size[job.priority] ?? 3;
+    const meeting = ranked.filter((r) => r.canMeet);
+    const wave = size === 0 ? (meeting.length ? meeting : ranked) : ranked.slice(0, size);
+    const waveNo = job.dispatch_wave + (wave.length ? 1 : 0);
     const minutes = settings.offer_expiry_minutes[job.priority] ?? 60;
-    let offered = 0;
-    for (const a of assessments) {
-      if (skip.has(a.contractorId)) continue;
-      await c.query(`INSERT INTO job_offers (job_id, contractor_id, expires_at) VALUES ($1,$2, now() + ($3 || ' minutes')::interval)`,
-        [jobId, a.contractorId, String(minutes)]);
+    const sms = offerNeedsSms(job.priority, settings, holidays);
+    const site = await one(c, 'SELECT suburb, city, region FROM sites WHERE id = $1', [job.site_id]);
+    const where = [site.suburb, site.city ?? site.region].filter(Boolean).join(', ');
+    const label = priorityLabel(job.priority);
+    for (const [i, a] of wave.entries()) {
+      const offer = await one(c,
+        `INSERT INTO job_offers (job_id, contractor_id, expires_at, wave, rank, est_arrival_minutes, can_meet_sla)
+         VALUES ($1,$2, now() + ($3 || ' minutes')::interval, $4, $5, $6, $7) RETURNING id`,
+        [jobId, a.contractorId, String(minutes), waveNo, i + 1, a.estArrivalMinutes, a.canMeet]);
       await notifyContractor(c, a.contractorId, {
-        template: 'job_offer', subject: `New ${job.priority} job offer ${job.ref}`,
-        body: `A new ${job.priority} job is available: ${job.title}.\nThis offer expires in ${minutes} minutes.\nView and accept: ${link('/c')}`,
-        idempotencyKey: `offer:${jobId}:${a.contractorId}:${Date.now()}`, relatedType: 'job', relatedId: jobId,
+        template: 'job_offer', subject: `New ${label} job offer ${job.ref}`,
+        body: `A new ${label} job is available in ${where}: ${job.title}.\n` +
+          (job.sla_onsite_due ? `SLA: on site by ${fmtNz(job.sla_onsite_due)}.\n` : '') +
+          `This offer expires in ${minutes} minutes.\nView and accept: ${link(`/c/jobs/${jobId}`)}`,
+        idempotencyKey: `offer:${offer.id}`, relatedType: 'job', relatedId: jobId,
       });
-      offered++;
+      if (sms) {
+        await smsContractor(c, a.contractorId, {
+          template: 'job_offer_sms',
+          body: `Ridgeline ${label.toUpperCase()} ${job.ref} ${where}: ${job.title}.${job.sla_onsite_due ? ` On site by ${fmtNz(job.sla_onsite_due)}.` : ''} Accept within ${minutes} min: ${link(`/c/jobs/${jobId}`)}`,
+          idempotencyKey: `offer-sms:${offer.id}`, relatedType: 'job', relatedId: jobId,
+        });
+      }
+    }
+    // Always stamp the attempt so advanceDispatchWaves retries later (e.g. when a contractor becomes available).
+    await c.query('UPDATE jobs SET dispatch_wave = $2, dispatch_wave_at = now() WHERE id = $1', [jobId, waveNo]);
+    if (wave.length) {
+      await recordJobEvent(c, actor, jobId, 'dispatch.wave', {
+        note: `Wave ${waveNo}: ${wave.map((w, i) => `${i + 1}. ${w.name} (ETA ~${w.estArrivalMinutes} min${w.canMeet ? '' : ', may miss SLA'})`).join('; ')}`,
+      });
     }
     const live = await one<{ n: number }>(c, `SELECT COUNT(*)::int AS n FROM job_offers WHERE job_id = $1 AND status = 'offered'`, [jobId]);
     if (live.n > 0 && job.status === 'dispatch') {
@@ -108,12 +177,66 @@ export async function dispatchJob(db: Db, actor: Actor, jobId: string): Promise<
     if (live.n === 0) {
       await notifyStaff(c, ['ops', 'admin'], {
         template: 'job_unassigned', subject: `No eligible contractor for ${job.ref}`,
-        body: `Job ${job.ref} (${job.priority}) has no eligible contractor available. Manual assignment is required.\n${link(`/admin/jobs/${jobId}`)}`,
+        body: `Job ${job.ref} (${label}) has no eligible contractor available. Manual assignment is required.\n${link(`/admin/jobs/${jobId}`)}`,
         idempotencyKey: `unassigned:${jobId}:${new Date().toISOString().slice(0, 13)}`, relatedType: 'job', relatedId: jobId,
       });
+      // An emergency with nobody to offer it to escalates immediately rather than waiting for the timer.
+      if (job.priority === 'emergency') await escalateJob(c, job, 'no eligible contractor available');
     }
-    return { offered, eligible: assessments.length };
+    return { offered: wave.length, eligible: eligible.length, wave: waveNo };
   });
+}
+
+function fmtNz(d: string | Date): string {
+  return new Date(d).toLocaleString('en-NZ', { timeZone: 'Pacific/Auckland', weekday: 'short', hour: 'numeric', minute: '2-digit' });
+}
+
+/** Escalates an unassigned job to staff by SMS (escalation phones) and email. Idempotent per level. */
+async function escalateJob(c: Db, job: any, reason: string): Promise<void> {
+  const level = (job.escalation_level ?? 0) + 1;
+  const updated = await maybeOne(c, `UPDATE jobs SET escalation_level = $2, escalated_at = now() WHERE id = $1 AND escalation_level < $2 RETURNING id`, [job.id, level]);
+  if (!updated) return;
+  job.escalation_level = level;
+  const label = priorityLabel(job.priority);
+  const msg = `ESCALATION ${job.ref} (${label}) unassigned: ${reason}.${job.sla_onsite_due ? ` On-site SLA ${fmtNz(job.sla_onsite_due)}.` : ''} ${link(`/admin/jobs/${job.id}`)}`;
+  await smsEscalationPhones(c, msg, `escalation:${job.id}:${level}`);
+  await notifyStaff(c, ['ops', 'admin'], { template: 'job_escalated', subject: `Escalation: ${job.ref} (${label}) not accepted`, body: msg,
+    idempotencyKey: `escalation-email:${job.id}:${level}`, relatedType: 'job', relatedId: job.id });
+  await recordJobEvent(c, SYSTEM_ACTOR, job.id, 'dispatch.escalated', { note: `Level ${level}: ${reason}` });
+}
+
+/** Worker: escalates jobs nobody has accepted within the priority's escalation window (P1 default 10 minutes). */
+export async function escalateUnassigned(db: Db): Promise<number> {
+  const settings = await getSettings(db);
+  const jobs = await query(db, `SELECT id, priority, sla_started_at FROM jobs WHERE status IN ('dispatch','offered') AND escalation_level = 0 AND sla_started_at IS NOT NULL`);
+  let n = 0;
+  for (const j of jobs) {
+    const window = settings.escalation_minutes[j.priority] ?? 60;
+    if (Date.now() - new Date(j.sla_started_at).getTime() < window * 60000) continue;
+    await tx(db, async (c) => {
+      const job = await lockJob(c, j.id);
+      if (!['dispatch', 'offered'].includes(job.status)) return;
+      await escalateJob(c, job, `no contractor accepted within ${window} minutes`);
+      n++;
+    });
+  }
+  return n;
+}
+
+/** Worker: offers the next wave when the current wave's window has passed without an acceptance. */
+export async function advanceDispatchWaves(db: Db): Promise<number> {
+  const settings = await getSettings(db);
+  if (!settings.auto_dispatch) return 0;
+  const jobs = await query(db, `SELECT id, priority, dispatch_wave_at FROM jobs WHERE status IN ('dispatch','offered') AND dispatch_wave_at IS NOT NULL`);
+  let n = 0;
+  for (const j of jobs) {
+    const minutes = settings.dispatch_wave_minutes[j.priority] ?? 60;
+    if (Date.now() - new Date(j.dispatch_wave_at).getTime() < minutes * 60000) continue;
+    const r = await dispatchJob(db, SYSTEM_ACTOR, j.id);
+    if (r.offered) n++;
+    else await db.query('UPDATE jobs SET dispatch_wave_at = now() WHERE id = $1', [j.id]);
+  }
+  return n;
 }
 
 async function finaliseAssignment(c: Db, actor: Actor, job: any, contractorId: string, method: 'accepted' | 'manual', note?: string) {
@@ -125,12 +248,28 @@ async function finaliseAssignment(c: Db, actor: Actor, job: any, contractorId: s
     throw err;
   }
   // Close every remaining live offer (an accepted offer is already marked 'accepted').
-  await c.query(`UPDATE job_offers SET status = 'withdrawn', responded_at = now() WHERE job_id = $1 AND status = 'offered'`, [job.id]);
+  const withdrawn = await query<{ contractor_id: string }>(c,
+    `UPDATE job_offers SET status = 'withdrawn', responded_at = now() WHERE job_id = $1 AND status = 'offered' RETURNING contractor_id`, [job.id]);
+  if (job.priority === 'emergency') {
+    // Stop other contractors heading to an emergency that has been taken.
+    for (const w of withdrawn) {
+      if (w.contractor_id === contractorId) continue;
+      await smsContractor(c, w.contractor_id, { template: 'job_taken_sms', body: `Ridgeline ${job.ref} has been taken by another contractor. No action needed.`,
+        idempotencyKey: `taken-sms:${job.id}:${w.contractor_id}`, relatedType: 'job', relatedId: job.id });
+    }
+  }
   await transitionJob(c, actor, job, 'assigned', {
     eventType: method === 'manual' ? 'assigned.manual' : 'assigned.accepted', note,
     set: { assigned_contractor_id: { value: contractorId }, accepted_at: { sql: 'now()' }, arrived_at: { value: null }, started_at: { value: null } },
   });
   const contractor = await one(c, 'SELECT legal_name, trading_name FROM contractors WHERE id = $1', [contractorId]);
+  const site = await one(c, 'SELECT address, suburb, city FROM sites WHERE id = $1', [job.site_id]);
+  await smsContractor(c, contractorId, {
+    template: 'job_confirmed_sms',
+    body: `Confirmed: you have ${job.ref} (${priorityLabel(job.priority)}) at ${[site.address, site.suburb, site.city].filter(Boolean).join(', ')}.` +
+      `${job.sla_onsite_due ? ` On site by ${fmtNz(job.sla_onsite_due)}.` : ''} ${link(`/c/jobs/${job.id}`)}`,
+    idempotencyKey: `confirmed-sms:${job.id}:${contractorId}:${Date.now()}`, relatedType: 'job', relatedId: job.id,
+  });
   await notifyCustomer(c, job.customer_id, {
     template: 'job_assigned', subject: `Contractor assigned to ${job.ref}`,
     body: `${contractor.trading_name || contractor.legal_name} has been assigned to your job ${job.ref}: ${job.title}.\nTrack progress: ${link(`/app/jobs/${job.id}`)}`,
@@ -252,23 +391,4 @@ export async function unassign(db: Db, actor: Actor, jobId: string, reason: stri
       body: `Ridgeline has withdrawn job ${job.ref} from you. Reason: ${reason}`, idempotencyKey: `withdrawn:${jobId}:${previous}:${Date.now()}` });
     await audit(c, actor, { action: 'job.unassigned', entityType: 'job', entityId: jobId, customerId: job.customer_id, contractorId: previous, details: { reason } });
   });
-}
-
-/** Alerts operations about jobs at risk of breaching respond/attend deadlines. */
-export async function checkSlaRisks(db: Db): Promise<number> {
-  const risky = await query(db,
-    `SELECT id, ref, priority, status, respond_by, attend_by FROM jobs
-      WHERE sla_alerted_at IS NULL AND (
-        (status IN ('dispatch','offered') AND respond_by IS NOT NULL AND respond_by - (respond_by - created_at) * 0.25 <= now())
-        OR (status = 'assigned' AND attend_by IS NOT NULL AND attend_by - (attend_by - created_at) * 0.2 <= now()))`);
-  for (const j of risky) {
-    await notifyStaff(db, ['ops', 'admin'], {
-      template: 'sla_risk', subject: `SLA risk: ${j.ref} (${j.priority})`,
-      body: `Job ${j.ref} is "${j.status}" and is at risk of breaching its ${j.status === 'assigned' ? 'attendance' : 'response'} deadline ` +
-        `(${new Date(j.status === 'assigned' ? j.attend_by : j.respond_by).toISOString()}).\n${link(`/admin/jobs/${j.id}`)}`,
-      idempotencyKey: `sla:${j.id}`, relatedType: 'job', relatedId: j.id,
-    });
-    await db.query('UPDATE jobs SET sla_alerted_at = now() WHERE id = $1', [j.id]);
-  }
-  return risky.length;
 }

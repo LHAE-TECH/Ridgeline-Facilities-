@@ -23,16 +23,28 @@
     <p class="field-hint">Bank transfers: pay to <strong><%= company.bank_account_name %></strong> <%= company.bank_account_number || '(account number shown on your request)' %> quoting the request reference. Funds are credited when Ridgeline confirms receipt.</p>
   </div>
   <div class="card"><h2>Automatic top-ups</h2>
+    <% if (cardStatus === 'saved') { %><p class="flash success">Card saved. It may take a moment to appear while the payment provider confirms it.</p><% } %>
+    <% if (cardStatus === 'cancelled') { %><p class="flash error">Card setup was cancelled. No card was saved.</p><% } %>
+    <% if (stripe) { %>
+      <p><strong>Saved card:</strong> <%= card ? card.brand.toUpperCase() + ' ending ' + card.last4 + ' (expires ' + card.exp_month + '/' + card.exp_year + ')' : 'none' %></p>
+      <% if (actor.customerRole === 'owner') { %><div class="actions">
+        <form method="post" action="/app/cards/setup"><%- include('../partials/csrf') %><button type="submit" class="secondary"><%= card ? 'Replace card' : 'Save a card for automatic top-ups' %></button></form>
+        <% if (card) { %><form method="post" action="/app/cards/remove" data-confirm="Remove the saved card? Automatic top-ups will switch to bank-transfer requests."><%- include('../partials/csrf') %><button type="submit" class="secondary">Remove card</button></form><% } %>
+      </div><p class="field-hint">Card details are entered on Stripe's secure page and never stored by Ridgeline.</p><% } %>
+    <% } %>
     <% if (consent) { %>
-      <p>Active since <%= date(consent.consented_at) %>: request <strong><%= money(consent.amount_cents) %></strong> when the balance falls below <strong><%= money(consent.trigger_below_cents) %></strong>.</p>
+      <p>Active since <%= date(consent.consented_at) %>: <strong><%= money(consent.amount_cents) %></strong> when the balance falls below <strong><%= money(consent.trigger_below_cents) %></strong>,
+        <%= consent.payment_method_id && stripe ? 'charged automatically to the saved card' : 'requested for payment by bank transfer' %>.</p>
+      <% if (consent.failure_count) { %><p class="notice err">Last automatic charge failed (<%= consent.last_failure_reason %>).<%= consent.failure_count >= maxFailures ? ' Automatic charging is paused until you replace the card.' : '' %></p><% } %>
       <p class="field-hint"><%= consent.consent_text %></p>
       <% if (actor.customerRole === 'owner') { %><form method="post" action="/app/auto-topup/revoke"><%- include('../partials/csrf') %><button class="secondary" type="submit">Withdraw authority</button></form><% } %>
     <% } else if (actor.customerRole === 'owner') { %>
       <form method="post" action="/app/auto-topup" class="stack"><%- include('../partials/csrf') %>
         <div class="grid-2"><div><label>Top-up amount</label><input name="amount" inputmode="decimal" required></div><div><label>When balance falls below</label><input name="threshold" inputmode="decimal" required value="<%= dollarsInput(position.minimumCents) %>"></div></div>
-        <label class="check"><input type="checkbox" name="consent" required> <span><%= consentText.replace('{amount}', 'the amount above').replace('{threshold}', 'the threshold above') %></span></label>
+        <label class="check"><input type="checkbox" name="consent" required> <span><%= consentText %></span></label>
         <button type="submit" class="secondary">Authorise automatic top-ups</button>
       </form>
+      <% if (stripe && !card) { %><p class="field-hint">Without a saved card, automatic top-ups are sent to you as payment requests. Save a card first to have them charged automatically.</p><% } %>
     <% } else { %><p class="muted">Only the account owner can authorise automatic top-ups.</p><% } %>
   </div>
 </div>
