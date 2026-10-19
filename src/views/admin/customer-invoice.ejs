@@ -16,10 +16,17 @@
   <p>Prepaid balance <%= money(position.balanceCents) %>. <%= customer.auto_apply_prepaid ? 'Up to ' + money(Math.min(position.balanceCents, invoice.total_cents)) + ' of prepaid credit will be applied; any remainder becomes a receivable due in ' + customer.payment_terms_days + ' days.' : 'Prepaid credit is NOT applied automatically for this customer; the full amount becomes a receivable.' %></p>
   <% if (disputes.length) { %><p class="notice err">An open dispute blocks invoicing.</p><% } %>
   <% if (['admin','finance'].includes(actor.role)) { %><div class="actions">
+  <% if (supersededHold) { %>
+  <div class="notice warn"><strong>Held for review:</strong> <%= supersededHold %> Obtain the customer's acceptance (they are asked at their next sign-in), or issue it with a recorded reason.</div>
+  <form method="post" action="/admin/customer-invoices/<%= invoice.id %>/issue" class="stack" data-confirm="Issue this invoice although the customer has not accepted the current terms?"><%- include('../partials/csrf') %>
+    <input name="superseded_terms_reason" required placeholder="Reason for issuing without current terms acceptance"><button type="submit">Issue with recorded reason</button></form>
+  <% } else { %>
   <form method="post" action="/admin/customer-invoices/<%= invoice.id %>/issue" data-confirm="Issue this invoice and apply prepaid credit?"><%- include('../partials/csrf') %><button type="submit">Issue invoice &amp; email customer</button></form>
+  <% } %>
   <form method="post" action="/admin/customer-invoices/<%= invoice.id %>/recalculate"><%- include('../partials/csrf') %><button type="submit" class="secondary">Recalculate from current rules</button></form></div><% } %>
 </div>
 <% } else { %>
+<% if (invoice.superseded_terms_issue_reason) { %><div class="notice">Issued without current terms acceptance: <%= invoice.superseded_terms_issue_reason %></div><% } %>
 <div class="card"><h2>Settlement</h2><dl class="kv"><dt>Issued</dt><dd><%= date(invoice.issue_date) %> · due <%= date(invoice.due_date) %> · emailed <%= invoice.sent_at ? dt(invoice.sent_at) : 'not yet sent' %></dd>
   <dt>Prepaid credit applied</dt><dd><%= money(invoice.prepaid_applied_cents) %></dd><dt>Payments received</dt><dd><%= money(invoice.amount_paid_cents) %></dd>
   <dt>Credit notes</dt><dd><%= money(invoice.credited_cents) %><% if (invoice.credit_to_prepaid_cents) { %> (<%= money(invoice.credit_to_prepaid_cents) %> returned to prepaid)<% } %></dd><dt>Outstanding</dt><dd><strong><%= money(outstanding) %></strong></dd></dl>

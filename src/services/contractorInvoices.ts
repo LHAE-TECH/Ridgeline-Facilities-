@@ -7,7 +7,7 @@ import { applyBps, formatNzd, formatQuantity, gstOn, qtyAmount } from '../lib/mo
 import { audit } from './audit.js';
 import { isMakeSafeOnly } from './p1Scope.js';
 import { currentRateCard } from './contractors.js';
-import { createCustomerInvoiceDraft, issueCustomerInvoice } from './customerInvoices.js';
+import { createCustomerInvoiceDraft, issueCustomerInvoice, supersededTermsHold } from './customerInvoices.js';
 import { lockJob, transitionJob } from './jobState.js';
 import { postJournal } from './ledger.js';
 import { link, notifyContractor, notifyStaff } from './notifications.js';
@@ -262,7 +262,18 @@ export async function approveContractorInvoice(db: Db, actor: Actor, invoiceId: 
     return { draftId: draft.id as string };
   });
   const settings = await getSettings(db);
-  if (settings.auto_issue_customer_invoices) await issueCustomerInvoice(db, actor, result.draftId);
+  if (settings.auto_issue_customer_invoices) {
+    const job = await one(db, 'SELECT j.* FROM jobs j JOIN contractor_invoices ci ON ci.job_id = j.id WHERE ci.id = $1', [invoiceId]);
+    const held = await supersededTermsHold(db, job);
+    if (held) {
+      // Never auto-issue: leave the draft held for finance to review.
+      await notifyStaff(db, ['finance', 'admin'], { template: 'invoice_held_superseded_terms', subject: `Invoice held for review: ${job.ref}`,
+        body: `The customer invoice for ${job.ref} was not issued automatically because ${held}\n${link(`/admin/customer-invoices/${result.draftId}`)}`,
+        idempotencyKey: `invoice-held:${result.draftId}` });
+    } else {
+      await issueCustomerInvoice(db, actor, result.draftId);
+    }
+  }
   return result;
 }
 

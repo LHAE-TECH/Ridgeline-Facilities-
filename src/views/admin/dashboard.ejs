@@ -24,6 +24,23 @@
   <div class="stat <%= d.disputes ? 'alert' : '' %>"><div class="label">Open disputes</div><div class="value"><a href="/admin/disputes"><%= d.disputes %></a></div></div>
 </div>
 
+<h2>Make-safe contractor coverage</h2>
+<% if (!d.coverage.goLiveReady) { %><div class="notice err"><strong>Go-live gate 5 not met:</strong>
+  <% if (d.coverage.contractorsNotOnCurrentAgreement.length) { %><%= d.coverage.contractorsNotOnCurrentAgreement.length %> approved contractor(s) not on the current agreement. <% } %>
+  <% if (d.coverage.areasWithNone.length) { %>No make-safe-eligible contractor in: <%= d.coverage.areasWithNone.join(', ') %>.<% } %></div><% } %>
+<% if (d.coverage.areasBelowTwo.length) { %><div class="notice warn">Fewer than two make-safe-eligible contractors in: <strong><%= d.coverage.areasBelowTwo.join(', ') %></strong>.</div><% } %>
+<div class="card"><div class="table-wrap"><table><tr><th>Area</th><th class="num">P1 on-site target</th><th class="num">Eligible</th><th class="num">Blocked by agreement version</th><th>Blocked contractors</th></tr>
+<% d.coverage.areas.forEach(function (a) { %><tr><td><%= a.name %> <small class="muted"><%= a.metro ? 'metro' : 'non-metro' %></small></td><td class="num"><%= a.targetMinutes / 60 %> h</td>
+<td class="num"><span class="badge <%= a.zero ? 'err' : a.warning ? 'warn' : 'ok' %>"><%= a.eligibleCount %></span></td><td class="num"><%= a.blockedCount %></td>
+<td><% a.blocked.forEach(function (b, i) { %><%= i ? ', ' : '' %><a href="/admin/contractors/<%= b.id %>"><%= b.name %></a> (<%= b.version || 'none' %>)<% }) %><%= a.hasCentre ? '' : 'No reference point set for this area' %></td></tr><% }) %></table></div>
+<p class="field-hint">Counts approved, P1-capable contractors who cover the area and could reach its reference point within the P1 on-site target at <%= settings.travel_speed_kmh %> km/h. "Blocked": their agreement version lacks the make-safe clause or is superseded, so they are never sent make-safe jobs.
+<% if (d.coverage.baseUnknown.length) { %> Not placed (no base location): <%= d.coverage.baseUnknown.map(function (c) { return c.name; }).join(', ') %>.<% } %></p></div>
+
+<% if (d.supersededTerms.length) { %><h2>Booked under superseded terms</h2><div class="card"><div class="table-wrap"><table><tr><th>Job</th><th>Customer</th><th>Terms at booking</th><th>Invoice</th></tr>
+<% d.supersededTerms.forEach(function (j) { %><tr><td><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> <%= j.title %></td><td><a href="/admin/customers/<%= j.customer_id %>"><%= j.customer_name %></a></td><td><%= j.terms_version_at_booking || 'none' %></td>
+<td><% if (!j.invoice_id) { %>not drafted<% } else if (j.invoice_status === 'draft') { %><a href="/admin/customer-invoices/<%= j.invoice_id %>">held for review</a><% } else { %><a href="/admin/customer-invoices/<%= j.invoice_id %>"><%= j.invoice_status %></a><%= j.superseded_terms_issue_reason ? ' (issued with reason)' : '' %><% } %></td></tr><% }) %></table></div>
+<p class="field-hint">Listed until the customer accepts the current terms.</p></div><% } %>
+
 <h2>Unfunded emergency exposure</h2>
 <div class="stats">
   <div class="stat <%= d.unfundedP1.totalCents ? 'alert' : '' %>"><div class="label">Total unfunded P1 exposure</div><div class="value"><%= money(d.unfundedP1.totalCents) %></div>

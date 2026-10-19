@@ -6,7 +6,7 @@ import { multiplierToBps, percentToBps } from '../lib/money.js';
 import { acceptAssessment, latestAssessment, runAssessment } from '../services/assessment.js';
 import { approveContractorInvoice, getContractorInvoiceForActor, rejectContractorInvoice, validateContractorInvoice } from '../services/contractorInvoices.js';
 import { contractorProfile, createContractor, DOCUMENT_TYPES, reviewComplianceDocument, setContractorTrade, setRateCard, updateContractor, addComplianceDocument } from '../services/contractors.js';
-import { applyPrepaidToInvoice, createCreditNote, getCustomerInvoiceForActor, issueCustomerInvoice, outstandingCents, recalculateDraft } from '../services/customerInvoices.js';
+import { applyPrepaidToInvoice, createCreditNote, getCustomerInvoiceForActor, issueCustomerInvoice, outstandingCents, recalculateDraft, supersededTermsHold } from '../services/customerInvoices.js';
 import { CUSTOMER_CATEGORIES, hashPassword, NZ_REGIONS, portfolio, SERVICE_LEVELS, setSiteArea, updateCustomerTerms } from '../services/customers.js';
 import { assessContractorsForJob, dispatchJob, manualAssign, rankForSla, unassign } from '../services/dispatch.js';
 import { acceptanceHistory } from '../services/agreements.js';
@@ -401,11 +401,13 @@ adminRouter.get('/customer-invoices/:id', async (req, res) => {
   const customer = await one(pool, 'SELECT * FROM customers WHERE id = $1', [data.invoice.customer_id]);
   const position = await accountPosition(pool, customer.id);
   const disputes = await query(pool, `SELECT * FROM disputes WHERE job_id = $1 AND status IN ('open','investigating')`, [data.invoice.job_id]);
-  res.render('admin/customer-invoice', { ...data, customer, position, disputes, key: newKey() });
+  const job = await one(pool, 'SELECT * FROM jobs WHERE id = $1', [data.invoice.job_id]);
+  const supersededHold = data.invoice.status === 'draft' ? await supersededTermsHold(pool, job) : null;
+  res.render('admin/customer-invoice', { ...data, customer, position, disputes, key: newKey(), supersededHold });
 });
 
 adminRouter.post('/customer-invoices/:id/issue', action(async (req) => {
-  const inv = await issueCustomerInvoice(pool, actor(req), pid(req));
+  const inv = await issueCustomerInvoice(pool, actor(req), pid(req), { supersededTermsReason: optStr(req.body.superseded_terms_reason) });
   return { redirect: `/admin/customer-invoices/${inv.id}`, message: `Invoice ${inv.invoice_number} issued; email queued to the customer` };
 }));
 adminRouter.post('/customer-invoices/:id/recalculate', action(async (req) => {

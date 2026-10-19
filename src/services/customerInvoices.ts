@@ -6,8 +6,9 @@ import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { formatNzd, gstOn } from '../lib/money.js';
 import { audit } from './audit.js';
 import { isMakeSafeOnly } from './p1Scope.js';
+import { acceptanceStatus } from './terms.js';
 import { currentRateCard } from './contractors.js';
-import { lockJob, transitionJob } from './jobState.js';
+import { lockJob, recordJobEvent, transitionJob } from './jobState.js';
 import { type AccountCode, postJournal, prepaidMovement } from './ledger.js';
 import { link, notifyCustomer } from './notifications.js';
 import { type CostLine, loadApprovedRules, priceCostLines } from './pricing.js';
@@ -65,7 +66,18 @@ export async function createCustomerInvoiceDraft(db: Db, actor: Actor, contracto
  * Issues the invoice: assigns the invoice number, applies prepaid credit (per the service agreement), records the
  * remainder as a receivable, recognises revenue and GST, settles the job commitment and notifies the customer.
  */
-export async function issueCustomerInvoice(db: Db, actor: Actor, invoiceId: string) {
+/**
+ * A job booked by staff under superseded material terms keeps its invoice held for review while the customer has
+ * still not accepted the current terms. Returns why it is held, or null.
+ */
+export async function supersededTermsHold(db: Db, job: { booked_under_superseded_terms?: boolean; customer_id: string }): Promise<string | null> {
+  if (!job.booked_under_superseded_terms) return null;
+  const c = await one(db, 'SELECT terms_version FROM customers WHERE id = $1', [job.customer_id]);
+  const s = acceptanceStatus('customer', c.terms_version);
+  return s.needsAcceptance ? `the job was booked under superseded terms and the customer has not yet accepted version ${s.current}.` : null;
+}
+
+export async function issueCustomerInvoice(db: Db, actor: Actor, invoiceId: string, opts: { supersededTermsReason?: string } = {}) {
   if (!['admin', 'finance', 'system'].includes(actor.role)) throw new ForbiddenError('Only finance can issue customer invoices');
   return tx(db, async (c) => {
     const inv = await maybeOne(c, 'SELECT * FROM customer_invoices WHERE id = $1 FOR UPDATE', [invoiceId]);
@@ -80,6 +92,14 @@ export async function issueCustomerInvoice(db: Db, actor: Actor, invoiceId: stri
       throw new AppError(`Enter ${settings.company.legal_name}'s GST number in Admin → Settings before issuing GST invoices`, 409, 'gst_number_missing');
     }
     const job = await lockJob(c, inv.job_id);
+    const supersededReason = await supersededTermsHold(c, job);
+    if (supersededReason) {
+      if (!opts.supersededTermsReason?.trim()) throw new AppError(`Held for review: ${supersededReason} Obtain the customer's acceptance, or issue it with a recorded reason.`, 409, 'held_superseded_terms');
+      await c.query('UPDATE customer_invoices SET superseded_terms_issue_reason = $2, superseded_terms_issued_by = $3 WHERE id = $1', [inv.id, opts.supersededTermsReason.trim(), actor.id]);
+      await recordJobEvent(c, actor, job.id, 'terms.superseded_invoice_issued', { note: `Invoice issued without current terms acceptance: ${opts.supersededTermsReason.trim()}` });
+      await audit(c, actor, { action: 'customer_invoice.issued_superseded_terms', entityType: 'customer_invoice', entityId: inv.id, customerId: inv.customer_id,
+        details: { reason: opts.supersededTermsReason.trim() } });
+    }
     if (isMakeSafeOnly(job) && inv.subtotal_ex_gst_cents > job.p1_scope_cap_ex_gst_cents) {
       throw new AppError(`This emergency was authorised for make-safe work up to ${formatNzd(job.p1_scope_cap_ex_gst_cents)} ex GST; the invoice is ` +
         `${formatNzd(inv.subtotal_ex_gst_cents)} ex GST. Record the customer's approval or a staff override on the job before issuing.`, 409, 'make_safe_cap');

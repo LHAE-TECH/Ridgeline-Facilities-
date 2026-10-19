@@ -63,29 +63,30 @@ export const SETTING_DEFAULTS = {
   sla_business_hours: { start: '08:00', end: '17:00', days: [1, 2, 3, 4, 5] },
   sla_at_risk_bps: 7500,
   // Auckland SLA areas. A site's area comes from its suburb (edit these lists to move edge suburbs; no deploy needed).
+  // `centre` is an approximate reference point used only for the make-safe contractor coverage report.
   // Metro areas get the P1 metro target; non-metro areas get the non-metro P1 target. Staff can override per site.
   sla_areas: [
-    { name: 'Auckland Central', metro: true, suburbs: ['Auckland Central', 'Auckland CBD', 'City Centre', 'Ponsonby', 'Grey Lynn', 'Herne Bay', 'Freemans Bay', "St Mary's Bay", 'St Marys Bay',
+    { name: 'Auckland Central', metro: true, centre: { lat: -36.8485, lng: 174.7633 }, suburbs: ['Auckland Central', 'Auckland CBD', 'City Centre', 'Ponsonby', 'Grey Lynn', 'Herne Bay', 'Freemans Bay', "St Mary's Bay", 'St Marys Bay',
       'Parnell', 'Newmarket', 'Grafton', 'Eden Terrace', 'Newton', 'Arch Hill', 'Kingsland', 'Mount Eden', 'Epsom', 'Remuera', 'Mount Albert', 'Sandringham', 'Westmere',
       'Western Springs', 'Point Chevalier', 'Morningside', 'Balmoral', 'Three Kings', 'Mount Roskill', 'Ellerslie', 'Greenlane', 'One Tree Hill', 'Royal Oak', 'Onehunga',
       'Penrose', 'Mount Wellington', 'Meadowbank', 'St Johns', 'Orakei', 'Mission Bay', 'Kohimarama', 'St Heliers', 'Glendowie', 'Panmure', 'Glen Innes', 'Point England'] },
-    { name: 'North Shore', metro: true, suburbs: ['North Shore', 'Takapuna', 'Devonport', 'Bayswater', 'Belmont', 'Hauraki', 'Milford', 'Castor Bay', 'Forrest Hill', 'Sunnynook',
+    { name: 'North Shore', metro: true, centre: { lat: -36.78, lng: 174.745 }, suburbs: ['North Shore', 'Takapuna', 'Devonport', 'Bayswater', 'Belmont', 'Hauraki', 'Milford', 'Castor Bay', 'Forrest Hill', 'Sunnynook',
       'Northcote', 'Birkenhead', 'Birkdale', 'Beach Haven', 'Chatswood', 'Hillcrest', 'Glenfield', 'Totara Vale', 'Wairau Valley', 'Unsworth Heights', 'Rosedale', 'Albany',
       'Pinehill', 'Greenhithe', 'Campbells Bay', 'Mairangi Bay', 'Murrays Bay', 'Rothesay Bay', 'Browns Bay', 'Torbay', 'Long Bay'] },
-    { name: 'West Auckland', metro: true, suburbs: ['West Auckland', 'Henderson', 'New Lynn', 'Glen Eden', 'Titirangi', 'Green Bay', 'Blockhouse Bay', 'Avondale', 'New Windsor',
+    { name: 'West Auckland', metro: true, centre: { lat: -36.879, lng: 174.631 }, suburbs: ['West Auckland', 'Henderson', 'New Lynn', 'Glen Eden', 'Titirangi', 'Green Bay', 'Blockhouse Bay', 'Avondale', 'New Windsor',
       'Waterview', 'Kelston', 'Sunnyvale', 'Te Atatu', 'Te Atatu Peninsula', 'Te Atatu South', 'Massey', 'Westgate', 'West Harbour', 'Hobsonville', 'Whenuapai', 'Ranui',
       'Swanson', 'Lincoln', 'Oratia', 'Laingholm'] },
-    { name: 'East Auckland', metro: true, suburbs: ['East Auckland', 'Howick', 'Pakuranga', 'Botany', 'Botany Downs', 'Half Moon Bay', 'Bucklands Beach', 'Eastern Beach',
+    { name: 'East Auckland', metro: true, centre: { lat: -36.91, lng: 174.91 }, suburbs: ['East Auckland', 'Howick', 'Pakuranga', 'Botany', 'Botany Downs', 'Half Moon Bay', 'Bucklands Beach', 'Eastern Beach',
       'Highland Park', 'Cockle Bay', 'Shelly Park', 'Mellons Bay', 'Farm Cove', 'Sunnyhills', 'Golflands', 'Dannemora', 'Burswood', 'East Tamaki', 'Flat Bush', 'Ormiston'] },
-    { name: 'South Auckland', metro: true, suburbs: ['South Auckland', 'Manukau', 'Papatoetoe', 'Otahuhu', 'Otara', 'Mangere', 'Mangere Bridge', 'Favona', 'Middlemore', 'Wiri',
+    { name: 'South Auckland', metro: true, centre: { lat: -36.993, lng: 174.88 }, suburbs: ['South Auckland', 'Manukau', 'Papatoetoe', 'Otahuhu', 'Otara', 'Mangere', 'Mangere Bridge', 'Favona', 'Middlemore', 'Wiri',
       'Clover Park', 'Manurewa', 'Clendon Park', 'Weymouth', 'Hillpark', 'Homai', 'Randwick Park', 'Totara Heights', 'Goodwood Heights', 'Takanini', 'Conifer Grove',
       'Papakura', 'Red Hill', 'Rosehill'] },
-    { name: 'Rodney', metro: false, suburbs: ['Rodney', 'Orewa', 'Silverdale', 'Millwater', 'Red Beach', 'Hatfields Beach', 'Waiwera', 'Whangaparaoa', 'Stanmore Bay', 'Gulf Harbour',
+    { name: 'Rodney', metro: false, centre: { lat: -36.5, lng: 174.68 }, suburbs: ['Rodney', 'Orewa', 'Silverdale', 'Millwater', 'Red Beach', 'Hatfields Beach', 'Waiwera', 'Whangaparaoa', 'Stanmore Bay', 'Gulf Harbour',
       'Dairy Flat', 'Wainui', 'Puhoi', 'Warkworth', 'Snells Beach', 'Algies Bay', 'Matakana', 'Leigh', 'Omaha', 'Wellsford', 'Helensville', 'Kumeu', 'Huapai', 'Riverhead',
       'Waimauku', 'Muriwai'] },
-    { name: 'Franklin', metro: false, suburbs: ['Franklin', 'Pukekohe', 'Waiuku', 'Drury', 'Karaka', 'Paerata', 'Patumahoe', 'Bombay', 'Ramarama', 'Clevedon', 'Beachlands',
+    { name: 'Franklin', metro: false, centre: { lat: -37.2, lng: 174.9 }, suburbs: ['Franklin', 'Pukekohe', 'Waiuku', 'Drury', 'Karaka', 'Paerata', 'Patumahoe', 'Bombay', 'Ramarama', 'Clevedon', 'Beachlands',
       'Maraetai', 'Kawakawa Bay'] },
-  ] as { name: string; metro: boolean; suburbs: string[] }[],
+  ] as { name: string; metro: boolean; centre?: { lat: number; lng: number }; suburbs: string[] }[],
   // SLA-ranked dispatch: offers go out in waves, best-placed contractors first.
   dispatch_wave_size: { emergency: 0, urgent: 3, standard: 3, scheduled: 5 } as Record<string, number>,
   dispatch_wave_minutes: { emergency: 5, urgent: 20, standard: 60, scheduled: 240 } as Record<string, number>,
@@ -203,6 +204,7 @@ function validateSlaAreas(value: unknown): void {
     if (!a || typeof a.name !== 'string' || !a.name.trim()) throw new AppError('Each SLA area needs a name');
     if (typeof a.metro !== 'boolean') throw new AppError(`SLA area "${a.name}" needs "metro": true or false`);
     if (!Array.isArray(a.suburbs) || a.suburbs.some((x: unknown) => typeof x !== 'string' || !x.trim())) throw new AppError(`SLA area "${a.name}" needs a list of suburb names`);
+    if (a.centre !== undefined && (typeof a.centre?.lat !== 'number' || typeof a.centre?.lng !== 'number')) throw new AppError(`SLA area "${a.name}": centre must be { "lat": number, "lng": number }`);
     if (names.has(a.name.toLowerCase())) throw new AppError(`SLA area "${a.name}" is listed twice`);
     names.add(a.name.toLowerCase());
     for (const sub of a.suburbs as string[]) {

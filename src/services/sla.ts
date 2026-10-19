@@ -108,7 +108,7 @@ export function computeSlaTargets(
   }
 }
 
-export interface SlaArea { name: string; metro: boolean; suburbs: string[] }
+export interface SlaArea { name: string; metro: boolean; centre?: { lat: number; lng: number }; suburbs: string[] }
 
 function norm(v: string): string {
   return v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();

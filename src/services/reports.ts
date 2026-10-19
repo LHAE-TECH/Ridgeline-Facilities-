@@ -1,7 +1,9 @@
 import type { Db } from '../db.js';
 import { one, query } from '../db.js';
 import { accountBalances } from './ledger.js';
+import { makeSafeCoverage } from './coverage.js';
 import { followUpSummary } from './followUps.js';
+import { acceptanceStatus } from './terms.js';
 import { p1Exposure, p1HoldReport } from './p1Scope.js';
 import { areaUnconfirmedJobs, openSlaJobs, slaPerformance, unconfirmedSites } from './sla.js';
 
@@ -34,6 +36,13 @@ export async function dashboard(db: Db, period: { from: string; to: string }) {
   const unfundedP1 = await p1Exposure(db);
   const p1Holds = await p1HoldReport(db, period);
   const followUps = await followUpSummary(db);
+  const coverage = await makeSafeCoverage(db);
+  // Jobs booked by staff under superseded terms, listed until the customer accepts the current version.
+  const supersededTerms = (await query(db,
+    `SELECT j.id, j.ref, j.title, j.status, j.created_at, j.terms_version_at_booking, c.id AS customer_id, c.name AS customer_name, c.terms_version,
+            ci.id AS invoice_id, ci.status AS invoice_status, ci.superseded_terms_issue_reason
+       FROM jobs j JOIN customers c ON c.id = j.customer_id LEFT JOIN customer_invoices ci ON ci.job_id = j.id AND ci.status <> 'void'
+      WHERE j.booked_under_superseded_terms ORDER BY j.created_at`)).filter((j) => acceptanceStatus('customer', j.terms_version).needsAcceptance);
   const ci = await one(db, `SELECT COUNT(*) FILTER (WHERE status IN ('submitted','flagged'))::int AS awaiting, COUNT(*) FILTER (WHERE status = 'flagged')::int AS flagged FROM contractor_invoices`);
   const custInv = await one(db, `SELECT COUNT(*) FILTER (WHERE status = 'draft')::int AS drafts,
       COUNT(*) FILTER (WHERE status <> 'draft' AND status <> 'void' AND issue_date BETWEEN $1 AND $2)::int AS issued_in_period,
@@ -74,6 +83,8 @@ export async function dashboard(db: Db, period: { from: string; to: string }) {
     unfundedP1,
     p1Holds,
     followUps,
+    coverage,
+    supersededTerms,
     gl,
     balanceSheet: {
       cash: (gl.BANK ?? 0) + (gl.STRIPE_CLEARING ?? 0),

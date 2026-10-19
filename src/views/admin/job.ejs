@@ -2,6 +2,7 @@
 <div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><a href="/admin/customers/<%= job.customer_id %>"><%= job.customer_name %></a> · <%= job.site_name %>, <%= job.site_region %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <strong><%= prio(job.priority) %></strong></small></div>
 <div><%- include('../partials/status', { s: job.status }) %></div></div>
 <% if (job.hold_reason) { %><div class="notice"><%= job.hold_reason %></div><% } %>
+<% if (job.booked_under_superseded_terms) { %><div class="notice warn"><strong>Booked under superseded terms</strong> (<%= job.terms_version_at_booking || 'none accepted' %>). The customer invoice is held for review until the customer accepts the current terms or finance issues it with a reason.</div><% } %>
 <% if (job.priority === 'emergency' && job.p1_held_at && !job.p1_hold_released_at && job.status === 'pending_funds') { %>
 <div class="card"><h2>P1 held: unfunded threshold reached</h2>
   <%- include('../partials/p1-hold', { job: job }) %>

@@ -5,6 +5,7 @@ import { SYSTEM_ACTOR, isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { formatNzd } from '../lib/money.js';
 import { assertCustomerTermsCurrent } from './agreements.js';
+import { acceptanceStatus } from './terms.js';
 import { audit } from './audit.js';
 import { assertCustomerAccess } from './customers.js';
 import { dispatchJob } from './dispatch.js';
@@ -199,6 +200,16 @@ export async function createBooking(db: Db, actor: Actor, rawInput: BookingInput
        resolved.suggested, resolved.note]);
     await recordJobEvent(c, actor, job.id, 'created', { to: 'pending_funds',
       note: `${priorityLabel(input.priority)} · estimated ${formatNzd(estimateTotal)} incl. GST${resolved.note ? ` · ${resolved.note}` : ''}` });
+    // Staff can book for a customer on superseded material terms; the job is tagged and its invoice held for review.
+    const termsStatus = acceptanceStatus('customer', customer.terms_version);
+    await c.query('UPDATE jobs SET terms_version_at_booking = $2, booked_under_superseded_terms = $3 WHERE id = $1',
+      [job.id, customer.terms_version, termsStatus.needsAcceptance]);
+    if (termsStatus.needsAcceptance) {
+      Object.assign(job, { booked_under_superseded_terms: true, terms_version_at_booking: customer.terms_version });
+      await recordJobEvent(c, actor, job.id, 'terms.superseded_at_booking', {
+        note: `Booked by ${actor.name} under superseded terms (${customer.terms_version ?? 'none accepted'}; current ${termsStatus.current}). The customer invoice will be held for review.`,
+      });
+    }
     // A P1 clock runs from the moment of booking, so any delay before release counts against the target.
     if (input.priority === 'emergency') await recordSlaStart(c, actor, job);
 

@@ -107,10 +107,15 @@ Changing assumptions does not change agreed balances. Recalculate and re-agree a
 
 Agreement versions are listed in `src/services/terms.ts`. Each one is marked **minor** (wording only; existing acceptances carry over) or **material** (rights or obligations change; everyone on an earlier version must accept again). Version `2026-10-v2` of both agreements is **material**.
 
-- A customer on a superseded material version **cannot book** until an account owner or approver accepts the current version. Owners and approvers are taken to the acceptance page at sign-in; other users see a banner asking them to get it accepted. Staff can still book on a customer's behalf (for example, an emergency by phone).
+- A customer on a superseded material version **cannot book** until an account owner or approver accepts the current version. Owners and approvers are taken to the acceptance page at sign-in; other users see a banner asking them to get it accepted.
+- **Staff bookings are never blocked by paperwork** (for example, an emergency by phone). A job staff book for a customer on superseded material terms proceeds normally but is tagged **booked under superseded terms**:
+  - its customer invoice is **held for review**: it is never issued automatically, even with `auto_issue_customer_invoices` on, and finance are notified;
+  - finance either obtains the customer's acceptance (asked at their next sign-in), after which the invoice issues normally, or issues it with a **recorded reason** (stored on the invoice, in the job history and the audit log);
+  - the dashboard lists these jobs until the customer accepts the current terms.
 - A contractor on a superseded material version **cannot accept offers or be assigned manually** until they accept. They are taken to the acceptance page at sign-in.
 - A contractor whose accepted version lacks the make-safe clause (4A) is **never offered or assigned a make-safe job**, and this cannot be overridden. Without that clause, capping their work would rely on terms they never agreed to.
 - Customer and contractor records show the current version, what the party accepted and when, a re-acceptance flag, and the full acceptance history. History is append-only.
+- **Make-safe contractor coverage** (dashboard): for each SLA area, how many approved, P1-capable contractors could reach it within its P1 on-site target, split into **eligible** (on the current agreement with the make-safe clause) and **blocked by agreement version** (named, with their version). It warns when an area has fewer than two eligible contractors, and shows go-live gate 5 (every approved contractor on the current version, no area with none). Reach is estimated from each contractor's base location to the area's reference point (`centre` in `sla_areas`) at `travel_speed_kmh`. This panel is visibility only and does not change dispatch.
 - When the text changes, add a new version in `terms.ts` (never edit a published one), mark it minor or material, and update the template.
 
 ## Booking rules and exceptions

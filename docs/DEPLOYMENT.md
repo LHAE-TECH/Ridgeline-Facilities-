@@ -95,6 +95,12 @@ Do not take real bookings until **every gate below has passed and been recorded*
    If the status stays at `queued`/`sent`, Twilio cannot reach the callback (DNS, TLS, firewall, wrong `APP_BASE_URL`, or a signature mismatch from a proxy rewriting the URL). **Stop and fix before promoting to production.**
 4. **GATE 4: the same callback check on PRODUCTION, before the first real booking.** Production has its own host name, TLS certificate, `APP_BASE_URL` and Twilio credentials, so staging cannot prove them. After the first production deploy, and before any customer is invited, repeat the delivered and failed checks from Gate 3 on production with a staff test customer and contractor, then cancel the test jobs. **Do not take real bookings until it passes.** This gate also applies after any change to the production domain, `APP_BASE_URL` or Twilio account.
 
+5. **GATE 5: make-safe contractor coverage, before the first customer invite.** On production, the dashboard's *Make-safe contractor coverage* panel must show:
+   - **every approved contractor on the current agreement version** (no "approved contractor(s) not on the current agreement"); and
+   - **no SLA area with zero make-safe-eligible contractors** (Auckland Central, North Shore, West, East, South Auckland, Rodney, Franklin).
+
+   The panel shows "Go-live gate 5 not met" until both hold. Fewer than two eligible contractors in an area is a warning, not a gate, but treat it as an on-call risk, especially in Rodney and Franklin. Contractors without a base location cannot be placed in an area: record their base. **Do not invite customers until this gate passes.**
+
 Credentials for these tests come from the environment only (hosting secrets or CI secrets). They are never written to files, logs, tickets or docs. Use a dedicated Twilio subaccount with a low spend cap for testing, and rotate its credentials afterwards.
 
 ## Go-live checklist
