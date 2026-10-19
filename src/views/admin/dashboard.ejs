@@ -30,6 +30,14 @@
     <div class="sub"><%= money(d.unfundedP1.openUnfundedCents) %> on <%= d.unfundedP1.openJobs %> open job(s) · <%= money(d.unfundedP1.invoicedUnpaidCents) %> invoiced, unpaid</div></div>
   <div class="stat <%= d.unfundedP1.suspendedCustomers ? 'alert' : '' %>"><div class="label">Customers with unfunded P1 dispatch suspended</div><div class="value"><%= d.unfundedP1.suspendedCustomers %></div></div>
 </div>
+<div class="stats">
+  <div class="stat <%= d.p1Holds.stillHeld ? 'alert' : '' %>"><div class="label">P1 held at threshold (booked in period)</div><div class="value"><%= d.p1Holds.count %></div>
+    <div class="sub"><%= d.p1Holds.stillHeld %> still held · avg hold <%= d.p1Holds.avgHoldMinutes === null ? '—' : d.p1Holds.avgHoldMinutes + ' min' %> · longest <%= d.p1Holds.maxHoldMinutes === null ? '—' : d.p1Holds.maxHoldMinutes + ' min' %></div></div>
+  <div class="stat <%= d.followUps.length ? 'alert' : '' %>"><div class="label">Open follow-ups after make-safe</div><div class="value"><a href="/admin/follow-ups"><%= d.followUps.length %></a></div></div>
+</div>
+<% if (d.p1Holds.jobs.length) { %><div class="card"><h3>P1 holds (clock not paused)</h3><div class="table-wrap"><table><tr><th>Job</th><th>Customer</th><th class="num">Held</th><th>Ended</th><th>SLA</th></tr>
+<% d.p1Holds.jobs.forEach(function (j) { %><tr><td><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a></td><td><%= j.customer_name %></td><td class="num"><%= j.hold_minutes %> min</td>
+<td><%= j.p1_hold_released_at ? humanize(j.p1_hold_release_kind) : 'STILL HELD' %></td><td><%= j.sla_onsite_met === null ? 'open' : j.sla_onsite_met ? 'on-site met' : 'on-site missed' %></td></tr><% }) %></table></div></div><% } %>
 <% if (d.unfundedP1.customers.length) { %><div class="card"><div class="table-wrap"><table><tr><th>Customer</th><th class="num">Open unfunded</th><th class="num">Invoiced unpaid (P1)</th><th class="num">Unfunded balance / threshold</th></tr>
 <% d.unfundedP1.customers.forEach(function (c) { %><tr><td><a href="/admin/customers/<%= c.id %>"><%= c.name %></a></td><td class="num"><%= money(c.openUnfundedCents) %></td><td class="num"><%= money(c.invoicedUnpaidCents) %></td>
 <td class="num"><%= money(c.unfundedBalanceCents) %> / <%= money(c.thresholdCents) %><% if (c.suspended) { %> <span class="badge err">suspended</span><% } %></td></tr><% }) %></table></div></div><% } %>

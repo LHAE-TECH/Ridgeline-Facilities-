@@ -107,6 +107,9 @@ export const SETTING_DEFAULTS = {
   // Once a customer's unfunded balance (receivables plus unfunded open P1 jobs) reaches this, P1 jobs that cannot be
   // funded are no longer dispatched automatically: they wait for a staff funding exception (staff alerted at once).
   p1_unfunded_suspend_threshold_cents: 300000,
+  // At the threshold, hold unfunded P1s for an on-call or finance decision (true), or keep dispatching them for
+  // make-safe scope and only alert staff (false). Clocks run from booking either way.
+  p1_hold_at_threshold: true,
   // A site whose suburb is in no SLA area needs staff confirmation before booking. P1 is still accepted (nothing
   // holds an emergency) unless this is switched off; such jobs are excluded from SLA reporting until confirmed.
   unconfirmed_area_allows_p1: true,
@@ -159,6 +162,7 @@ export const SETTING_DESCRIPTIONS: Partial<Record<SettingKey, string>> = {
   monthly_report_enabled: 'Master switch for emailing monthly customer reports (each customer must also be switched on)',
   p1_unfunded_cap_ex_gst_cents: 'Make-safe cap (customer price, cents ex GST) for P1 jobs dispatched without funds or above the authority limit; per-customer override on the customer page',
   p1_unfunded_suspend_threshold_cents: 'Unfunded balance (cents incl GST: receivables plus unfunded open P1 jobs) at which automatic unfunded P1 dispatch stops for a customer; per-customer override',
+  p1_hold_at_threshold: 'At the unfunded threshold, hold P1 jobs for an on-call/finance release (on) or keep dispatching them for make-safe scope and alert staff (off). The P1 clock is never paused',
   unconfirmed_area_allows_p1: 'Accept P1 bookings at a site whose SLA area is not yet confirmed (other priorities wait for staff confirmation)',
   dispatch_wave_size: 'Contractors offered per dispatch wave, best SLA fit first (0 = all who can meet the SLA)',
   dispatch_wave_minutes: 'Minutes before the next dispatch wave is offered if nobody has accepted',

@@ -13,7 +13,18 @@ One container plus managed PostgreSQL. The application is a single Node process:
 | Card payments | Stripe (optional) | Bank transfer only |
 | Accounting | Xero Custom Connection (optional) | Journal CSV export to any accounting system |
 
-`render.yaml` is a ready-made Render Blueprint (web service + database + disk). Australian regions (e.g. Sydney on AWS/Fly) also work; Render currently offers Singapore as its closest region.
+`render.yaml` is a ready-made Render Blueprint with two environments, each with its own web service, database and disk:
+
+| | Production (`ridgeline-facilities`) | Staging (`ridgeline-facilities-staging`) |
+| --- | --- | --- |
+| Deploys | Manually (`autoDeploy: false`), after staging passes | Automatically from `main` |
+| `DEPLOYMENT_ENVIRONMENT` | `production` | `staging` (shows a STAGING banner on every page) |
+| Stripe | Live keys | **Test keys only**: the app refuses to start on staging with an `sk_live_` key |
+| Twilio | Production account | Dedicated subaccount with a low spend cap |
+| Email | Production SMTP | Sandbox / test inbox: staging must never email real customers |
+| Data | Real | Test customers, sites and contractors only (staff handsets as contractor mobiles) |
+
+Staging runs the same image and the same `NODE_ENV=production` code paths as production, so a gate passed there means something. The demo seed is refused on both. Australian regions (e.g. Sydney on AWS/Fly) also work; Render currently offers Singapore as its closest region.
 
 > A persistent disk ties the service to one instance. To run more than one instance, switch to `STORAGE_DRIVER=s3` first.
 
@@ -74,13 +85,15 @@ Do not take real bookings until **every gate below has passed and been recorded*
 
 1. **GATE 1: Live Stripe test passes.** `npm run test:live` with `STRIPE_TEST_SECRET_KEY` set: a saved card charged off-session and credited once, the webhook replay credits nothing, a declined card credits nothing (INTEGRATIONS.md).
 2. **GATE 2: Live Twilio test passes.** `npm run test:live` with live `TWILIO_*` credentials and `SMS_TEST_MOBILE`: a real SMS delivered to a real NZ mobile, its delivery receipt recorded, and a failing number recorded as failed (INTEGRATIONS.md).
-3. **GATE 3: Twilio's delivery callback reaches the DEPLOYED site.** The live test can only replay the callback unless it has a public URL, so this is checked on production itself:
-   - book a test P1 at a test site on the deployed app, with a contractor whose mobile is a staff handset;
+3. **GATE 3: Twilio's delivery callback reaches STAGING.** The live test can only replay the callback unless it has a public URL, so it is proven on the deployed staging service first:
+   - on staging, book a test P1 at a test site, with a test contractor whose mobile is a staff handset;
    - confirm the SMS arrives on the handset;
-   - confirm **Admin → Notifications** shows that SMS with delivery status **delivered**, set by Twilio's request to `https://<host>/webhooks/sms/twilio` (signature verified with the production auth token);
-   - repeat with an undeliverable number and confirm it shows **failed**.
+   - confirm **Admin → Notifications** shows that SMS with delivery status **delivered**, set by Twilio's request to `https://<staging-host>/webhooks/sms/twilio` (signature verified with the staging auth token);
+   - repeat with an undeliverable number and confirm it shows **failed**;
+   - hold a P1 at the unfunded threshold and confirm the on-call release holder's handset gets the hold SMS and that person can release it.
 
-   If the status stays at `queued`/`sent`, Twilio cannot reach the callback (DNS, TLS, firewall, wrong `APP_BASE_URL`, or a signature mismatch from a proxy rewriting the URL). Escalation SMS failures would then go unnoticed. **Do not go live.**
+   If the status stays at `queued`/`sent`, Twilio cannot reach the callback (DNS, TLS, firewall, wrong `APP_BASE_URL`, or a signature mismatch from a proxy rewriting the URL). **Stop and fix before promoting to production.**
+4. **GATE 4: the same callback check on PRODUCTION, before the first real booking.** Production has its own host name, TLS certificate, `APP_BASE_URL` and Twilio credentials, so staging cannot prove them. After the first production deploy, and before any customer is invited, repeat the delivered and failed checks from Gate 3 on production with a staff test customer and contractor, then cancel the test jobs. **Do not take real bookings until it passes.** This gate also applies after any change to the production domain, `APP_BASE_URL` or Twilio account.
 
 Credentials for these tests come from the environment only (hosting secrets or CI secrets). They are never written to files, logs, tickets or docs. Use a dedicated Twilio subaccount with a low spend cap for testing, and rotate its credentials afterwards.
 
@@ -95,6 +108,8 @@ Credentials for these tests come from the environment only (hosting secrets or C
 - [ ] Monthly customer report: leave `monthly_report_enabled` off until Ridgeline decides to switch it on (then enable per customer).
 - [ ] Unfunded emergencies: confirm `p1_unfunded_cap_ex_gst_cents` (default NZ$1,500 ex GST make-safe cap) and `p1_unfunded_suspend_threshold_cents` (default NZ$3,000), and set per-customer values where needed.
 - [ ] Clear the dashboard's **Area unconfirmed** list (pin each site or extend `sla_areas`).
+- [ ] Grant the **on-call P1 release** right (Admin → Staff users) to everyone on the on-call roster, with their mobile. The users page warns if any escalation phone belongs to nobody with the right, or if nobody holds it.
+- [ ] Decide `p1_hold_at_threshold` (default on: hold unfunded P1s at the threshold for an on-call release).
 - [ ] Make sure every emergency-capable contractor has a **mobile number**.
 - [ ] Create staff users with least privilege (ops / finance / admin).
 - [ ] Onboard contractors: verify trades, insurance and licences, agree rate cards, approve.

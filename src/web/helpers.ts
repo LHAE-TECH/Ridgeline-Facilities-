@@ -51,6 +51,7 @@ export const loadUser: RequestHandler = async (req, res, next) => {
   res.locals.flash = req.session.flash ?? [];
   req.session.flash = [];
   res.locals.path = req.path;
+  res.locals.deploymentEnvironment = config.deploymentEnvironment;
   res.locals.company = (await getSettings(pool)).company;
   Object.assign(res.locals, viewHelpers);
   next();

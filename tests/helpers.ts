@@ -147,8 +147,12 @@ export async function completeAndApprove(jobId: string, contractor: ContractorFi
   await addEvidence(db, contractor.actor, jobId, 'after_photo', [photo('after.png')]);
   // Arrival happened moments ago; backdate it so the reported labour fits the on-site time.
   await db.query(`UPDATE jobs SET arrived_at = now() - interval '3 hours', started_at = now() - interval '170 minutes' WHERE id = $1`, [jobId]);
+  // Make-safe jobs must say what was made safe and what remains outstanding.
+  const j = await one(db, 'SELECT p1_scope, scope_extended_at FROM jobs WHERE id = $1', [jobId]);
+  const makeSafe = j.p1_scope === 'make_safe' && !j.scope_extended_at
+    ? { madeSafeSummary: 'Water isolated at the meter; area cordoned off', outstandingWork: 'Replace burst section of pipe and repair ceiling' } : {};
   await completeJob(db, contractor.actor, jobId, { workPerformed: 'Replaced tap washer', labourMinutes: opts.labourMinutes ?? 150,
-    materials: [{ description: 'Tap washer', quantity: '1', unitCostCents: 2000 }] });
+    materials: [{ description: 'Tap washer', quantity: '1', unitCostCents: 2000 }], ...makeSafe });
   if (opts.approve !== false) await reviewEvidence(db, await staff('ops'), jobId, 'approve');
 }
 

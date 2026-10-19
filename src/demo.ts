@@ -85,9 +85,9 @@ export async function assertDemoSeedAllowed(db: Db): Promise<void> {
 }
 
 /** Called by the production server on start-up so demo seeding is permanently refused for this database. */
-export async function markProductionDatabase(db: Db): Promise<void> {
-  await db.query(`INSERT INTO settings (key, value, description) VALUES ('deployment_environment', '"production"', 'Set automatically by a production server; blocks demo data')
-    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+export async function markProductionDatabase(db: Db, environment = 'production'): Promise<void> {
+  await db.query(`INSERT INTO settings (key, value, description) VALUES ('deployment_environment', $1, 'Set automatically by a deployed server; production blocks demo data')
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(environment)]);
 }
 
 export function demoLogins() {

@@ -1,0 +1,18 @@
+<%- include('../partials/head', { title: 'Follow-ups' }) %>
+<div class="page-head"><div><h1>Follow-ups after make-safe</h1><small>Outstanding work recorded on make-safe jobs. Book a follow-up job or dismiss it with a reason; nothing is left silently.</small></div></div>
+<% if (!followUps.length) { %><div class="card"><p class="muted">No open follow-ups.</p></div><% } %>
+<% followUps.forEach(function (f) { %>
+<div class="card">
+  <h2><a href="/admin/jobs/<%= f.job_id %>"><%= f.job_ref %></a>: <%= f.job_title %></h2>
+  <p class="muted"><%= f.customer_name %> · <%= f.site_name %> · <%= f.trade_name %> · open <%= f.age_hours %> h<% if (f.made_safe_at) { %> · made safe <%= dt(f.made_safe_at) %><% } %></p>
+  <p><strong>Outstanding:</strong> <%= f.description %></p>
+  <div class="grid-2">
+    <form method="post" action="/admin/follow-ups/<%= f.id %>/book" class="stack"><%- include('../partials/csrf') %>
+      <div class="grid-2"><select name="priority"><% Object.keys(priorityMeta).forEach(function (p) { %><option value="<%= p %>" <%= p === 'standard' ? 'selected' : '' %>><%= priorityMeta[p].code %> <%= priorityMeta[p].label %></option><% }) %></select>
+      <input type="datetime-local" name="preferred_start" title="Required for P4 Scheduled"></div>
+      <input name="note" placeholder="Note for the follow-up job (optional)"><button type="submit">Book follow-up job</button></form>
+    <form method="post" action="/admin/follow-ups/<%= f.id %>/dismiss" class="stack"><%- include('../partials/csrf') %>
+      <input name="reason" required placeholder="Reason (e.g. customer arranging own tradesperson)"><button class="secondary" type="submit">Dismiss</button></form>
+  </div>
+</div><% }) %>
+<%- include('../partials/foot') %>

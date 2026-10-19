@@ -94,6 +94,7 @@ contractorRouter.post('/jobs/:id/complete', action(async (req) => {
   await completeJob(pool, actor(req), pid(req), {
     workPerformed: str(req.body.work_performed), labourMinutes: Math.round(hours * 60), workers: int(req.body.workers || '1', 'Workers'), materials,
     siteNotes: optStr(req.body.site_notes), issuesFound: optStr(req.body.issues_found), acknowledgedByName: optStr(req.body.acknowledged_by_name),
+    madeSafeSummary: optStr(req.body.made_safe_summary), outstandingWork: optStr(req.body.outstanding_work),
   }, geo(req.body));
   return { redirect: `/c/jobs/${pid(req)}`, message: 'Completion report submitted for Ridgeline review' };
 }));

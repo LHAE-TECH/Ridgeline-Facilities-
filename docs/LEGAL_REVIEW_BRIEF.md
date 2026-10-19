@@ -2,7 +2,7 @@
 
 **For:** Ridgeline's lawyer
 **Re:** Customer service agreement, contractor agreement and privacy statement for LHA Holdings Limited (NZBN 9429052390173), trading as Ridgeline Facilities
-**Drafts:** `/terms/customer`, `/terms/contractor` and `/privacy` in the app (source: `src/views/terms-customer.ejs`, `src/views/terms-contractor.ejs`, `src/views/privacy.ejs`). Version strings are in `src/services/terms.ts` (currently `2026-10-v1`). Each customer's and contractor's acceptance is recorded with the version and a timestamp.
+**Drafts:** `/terms/customer`, `/terms/contractor` and `/privacy` in the app (source: `src/views/terms-customer.ejs`, `src/views/terms-contractor.ejs`, `src/views/privacy.ejs`). Version strings are in `src/services/terms.ts` (currently `2026-10-v2`). Each customer's and contractor's acceptance is recorded with the version and a timestamp.
 
 The drafts were written alongside the software and have not had any legal review. Please review the whole set, but we need specific advice on the four issues below. Each one comes with the facts of how the system actually works, because the agreements have to match what the system does. The brief deliberately gives facts and questions only; it cites no legal authority.
 
@@ -50,7 +50,7 @@ The drafts were written alongside the software and have not had any legal review
 
 **How the clock works (so the agreement can describe it accurately):** P1 runs from booking, 24/7. P2–P4 run from release to dispatch, which follows funding and approval checks, in NZ business hours (8am–5pm Mon–Fri, excluding public holidays). Both the booked and released times are shown to the customer. The metro or non-metro area is set by the site's suburb. A site whose suburb is in no listed area must be confirmed by staff before non-emergency jobs can be booked, and its jobs are left out of SLA reporting until then.
 
-**Unfunded emergencies (system facts):** a P1 is dispatched immediately even when the prepaid balance does not cover it, or when its estimate is above the customer's authority limit. In those cases the contractor is authorised for **make-safe work only**, up to a cap (default NZ$1,500 ex GST, adjustable per customer). Work beyond that needs the customer's approval or a recorded staff override. Automatic unfunded dispatch stops for a customer once their unpaid and unfunded balance passes a threshold, and staff then decide each case. The published promise is "made safe", not "resolved".
+**Unfunded emergencies (system facts):** a P1 is dispatched immediately even when the prepaid balance does not cover it, or when its estimate is above the customer's authority limit. In those cases the contractor is authorised for **make-safe work only**, up to a cap (default NZ$1,500 ex GST, adjustable per customer). Work beyond that needs the customer's approval or a recorded staff override. Once a customer's unpaid and unfunded balance passes a threshold, further unfunded P1s are held until on-call staff or finance release them for make-safe work, with a recorded reason. Whether to hold at all is a setting. During a hold the P1 clock keeps running from booking, and the hold time is shown on the job and reported separately. The published P1 target currently has no good-standing condition, and Ridgeline is deciding separately whether to add one. The published promise is "made safe", not "resolved".
 
 **Questions:**
 1. Are these targets or contractual service levels? With no stated remedy, what is our exposure, for business customers and separately for residential and small-business customers?
@@ -58,6 +58,7 @@ The drafts were written alongside the software and have not had any legal review
 3. What exclusions are needed: access refused or delayed, incorrect site information, customer-caused delay, weather, civil emergency, parts availability, events beyond our control, held jobs (funds or approval) for P2–P4, and work outside the Auckland areas?
 4. Should "on site" and "made safe" be defined, and is our evidence (server timestamps and optional GPS) adequate?
 5. Does the customer agreement need to authorise make-safe work on an unfunded or over-authority emergency, and the charge for it up to the cap, in advance? How should that consent be captured?
+6. **Is our make-safe definition sufficient to limit scope contractually?** The contractor agreement (clause 4A) defines make-safe work as the minimum work reasonably necessary to remove or control an immediate risk of injury or further property damage until a permanent repair is arranged, with examples and exclusions. Contractors on a make-safe job must record what was made safe and what remains outstanding, and must not go further without approval confirmed in the app. Ridgeline is not obliged to pay for unapproved further work. The customer agreement (clause 3) uses the same definition and the cap. Is that wording enough to limit (a) what the contractor may do and charge, and (b) what the customer can be charged without further approval? What happens if a contractor reasonably believes further work is needed to make the site safe?
 
 ## 4. Prepaid balances: insolvency, termination and a possible trust
 

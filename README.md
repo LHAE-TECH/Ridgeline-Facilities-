@@ -67,7 +67,7 @@ Or with Docker: `docker compose up --build`, then `docker compose exec app node 
 
 ```bash
 createdb ridgeline_test
-npm test            # 129 tests: unit, service, HTTP and a Playwright end-to-end run (phone + desktop); live suites skip
+npm test            # 138 tests: unit, service, HTTP and a Playwright end-to-end run (phone + desktop); live suites skip
 npm run test:live   # real Stripe test mode + real Twilio SMS (required before go-live; see docs/INTEGRATIONS.md)
 ```
 

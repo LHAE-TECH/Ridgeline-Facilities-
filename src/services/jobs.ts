@@ -12,8 +12,8 @@ import { accountPosition, type AccountPosition } from './ledger.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
 import { type Priority, buildEstimateCostLines, loadApprovedRules, priceCostLines, type PricingResult } from './pricing.js';
 import { getSettings, type Settings } from './settings.js';
-import { makeSafeScope, type MakeSafeScope, notifyMakeSafeDispatch, unfundedPosition } from './p1Scope.js';
-import { classifyPriority, isEscalatedAboveTriage, priorityLabel, reclassifyPriority, refreshSiteArea, smsEscalationPhones, startSlaClock, type TriageAnswers } from './sla.js';
+import { isMakeSafeOnly, makeSafeScope, type MakeSafeScope, notifyMakeSafeDispatch, smsP1HoldAlert, unfundedPosition } from './p1Scope.js';
+import { classifyPriority, isEscalatedAboveTriage, priorityLabel, reclassifyPriority, refreshSiteArea, startSlaClock, type TriageAnswers } from './sla.js';
 import { TIME_WINDOW_LABELS, type TimeWindow, classifyTime, loadHolidays } from './timeWindows.js';
 
 export const PRIORITIES: Priority[] = ['emergency', 'urgent', 'standard', 'scheduled'];
@@ -269,7 +269,7 @@ async function autoDispatch(db: Db, jobId: string) {
  * Checks funding and, if it passes (or an exception applies), commits the estimated charge against the
  * customer's available balance and releases the job to dispatch. Caller holds the job lock.
  */
-async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, settings: Settings, exception?: { id: string }): Promise<FundingCheck> {
+async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, settings: Settings, exception?: { id: string; kind?: 'standard' | 'on_call_make_safe' }): Promise<FundingCheck> {
   const customer = await one(c, 'SELECT * FROM customers WHERE id = $1 FOR UPDATE', [job.customer_id]);
   const fresh = await one(c, 'SELECT * FROM jobs WHERE id = $1', [job.id]);
   const position = await accountPosition(c, job.customer_id);
@@ -278,14 +278,19 @@ async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, setting
 
   // P1: response is never limited, scope is. Unfunded or over-authority emergencies are authorised for make-safe only.
   let scope: MakeSafeScope | null = null;
+  let thresholdNote: string | null = null;
   if (job.priority === 'emergency' && !fresh.scope_extended_at) {
     const overAuthority = job.estimate_total_cents > customer.authority_limit_cents && !fresh.customer_approved_by;
-    if (shortfall || overAuthority) {
-      scope = makeSafeScope(fresh, customer, settings, shortfall && overAuthority ? 'unfunded_over_authority' : shortfall ? 'unfunded' : 'over_authority');
+    // An on-call release is always make-safe only, whatever has changed since the hold.
+    if (shortfall || overAuthority || exception?.kind === 'on_call_make_safe') {
+      scope = makeSafeScope(fresh, customer, settings, shortfall && overAuthority ? 'unfunded_over_authority' : overAuthority && !shortfall ? 'over_authority' : 'unfunded');
     }
     if (shortfall && !exception) {
       const unfunded = await unfundedPosition(c, job.customer_id, settings);
-      if (unfunded.suspended) return holdSuspendedP1(c, actor, job, funding, unfunded.totalCents, unfunded.thresholdCents);
+      if (unfunded.suspended) {
+        if (settings.p1_hold_at_threshold) return holdSuspendedP1(c, actor, job, funding, unfunded.totalCents, unfunded.thresholdCents);
+        thresholdNote = `Unfunded balance ${formatNzd(unfunded.totalCents)} is over the ${formatNzd(unfunded.thresholdCents)} threshold; dispatched anyway because p1_hold_at_threshold is off`;
+      }
     }
   }
 
@@ -309,6 +314,11 @@ async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, setting
   await transitionJob(c, actor, job, 'dispatch', { note, set: {
     released_at: { sql: 'COALESCE(released_at, now())' },
     ...(exception ? { funding_exception_id: { value: exception.id } } : {}),
+    // A P1 held at the threshold: record when and how the hold ended. The SLA clock was never paused.
+    ...(fresh.p1_held_at && !fresh.p1_hold_released_at ? {
+      p1_hold_released_at: { sql: 'now()' }, p1_hold_released_by: { value: actor.id },
+      p1_hold_release_kind: { value: exception?.kind === 'on_call_make_safe' ? 'on_call' : exception ? 'funding_exception' : 'funded' },
+    } : {}),
     ...(scope ? {
       p1_scope: { value: 'make_safe' }, p1_scope_reason: { value: scope.reason }, p1_scope_cap_ex_gst_cents: { value: scope.capExGstCents },
       authorised_contractor_cost_cents: { value: scope.authorisedContractorCostCents }, unfunded_cents: { value: unfundedCents },
@@ -322,6 +332,11 @@ async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, setting
       note: `Make-safe scope only (${scope.reason.replace(/_/g, ' ')}): up to ${formatNzd(scope.capExGstCents)} ex GST; contractor cost authorised ${formatNzd(scope.authorisedContractorCostCents)} ex GST; unfunded ${formatNzd(unfundedCents)}`,
     });
     await notifyMakeSafeDispatch(c, released, scope, shortfall ? `Please top up your account: ${funding.reasons.join('; ')}.` : '');
+  }
+  if (thresholdNote) {
+    await recordJobEvent(c, actor, job.id, 'p1.threshold_exceeded', { note: thresholdNote });
+    await notifyStaff(c, ['ops', 'finance', 'admin'], { template: 'p1_threshold_exceeded', subject: `P1 ${job.ref} dispatched over the unfunded threshold`,
+      body: `${thresholdNote}.\n${link(`/admin/jobs/${job.id}`)}`, idempotencyKey: `p1-threshold-exceeded:${job.id}` });
   }
   if (shortfall && job.priority === 'emergency') {
     await notifyStaff(c, ['finance', 'admin'], {
@@ -340,13 +355,16 @@ async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, setting
 async function holdSuspendedP1(c: Db, actor: Actor, job: any, funding: FundingCheck, unfundedCents: number, thresholdCents: number): Promise<FundingCheck> {
   const why = `Automatic unfunded P1 dispatch suspended: unfunded balance ${formatNzd(unfundedCents)} has reached the ${formatNzd(thresholdCents)} threshold`;
   if (job.status !== 'pending_funds') await transitionJob(c, actor, job, 'pending_funds', { note: why });
+  // The hold is timed from here; the P1 clock keeps running from booking and is never paused or reset.
+  await c.query('UPDATE jobs SET p1_held_at = COALESCE(p1_held_at, now()) WHERE id = $1', [job.id]);
   await recordJobEvent(c, actor, job.id, 'p1.unfunded_suspended', { note: `${why}. ${funding.reasons.join('; ')}` });
   await notifyStaff(c, ['ops', 'finance', 'admin'], {
     template: 'p1_unfunded_suspended', subject: `URGENT: P1 ${job.ref} held (unfunded threshold reached)`,
-    body: `${why}. The P1 clock is running from booking. Release it with a funding exception (make-safe scope) or contact the customer now.\n${link(`/admin/jobs/${job.id}`)}`,
+    body: `${why}. The P1 clock is running from booking. On-call staff can release it for make-safe work from the job page (reason required); finance can grant a funding exception.\n${link(`/admin/jobs/${job.id}`)}`,
     idempotencyKey: `p1-suspended:${job.id}`,
   });
-  await smsEscalationPhones(c, `URGENT P1 ${job.ref} HELD: customer unfunded balance over threshold. Decide funding exception now. ${link(`/admin/jobs/${job.id}`)}`, `p1-suspended-sms:${job.id}`);
+  // Sent to the on-call release holders (and escalation phones), so the person alerted can release it.
+  await smsP1HoldAlert(c, `URGENT P1 ${job.ref} HELD: unfunded balance over threshold. Clock running. Release for make-safe (reason required): ${link(`/admin/jobs/${job.id}`)}`, `p1-suspended-sms:${job.id}`);
   await notifyCustomer(c, job.customer_id, {
     template: 'p1_unfunded_suspended_customer', subject: `Emergency ${job.ref}: payment needed to dispatch`,
     body: `We cannot dispatch emergency job ${job.ref} automatically because your account has ${formatNzd(unfundedCents)} outstanding without prepaid cover. ` +
@@ -354,6 +372,40 @@ async function holdSuspendedP1(c: Db, actor: Actor, job: any, funding: FundingCh
     idempotencyKey: `p1-suspended-customer:${job.id}`,
   });
   return { ...funding, ok: false, emergencyOverride: false };
+}
+
+/**
+ * On-call release of a P1 held at the unfunded threshold. Open to staff holding the on-call release right (the people
+ * the hold SMS goes to) as well as finance and administrators. Make-safe scope only, reason required, fully audited.
+ */
+export async function releaseHeldP1OnCall(db: Db, actor: Actor, jobId: string, reason: string) {
+  if (!isStaff(actor)) throw new ForbiddenError();
+  const user = await one(db, 'SELECT on_call_p1_release, is_active FROM users WHERE id = $1', [actor.id]);
+  if (!user.is_active || (!user.on_call_p1_release && !['admin', 'finance'].includes(actor.role))) {
+    throw new ForbiddenError('You do not hold the on-call P1 release right');
+  }
+  if (!reason?.trim()) throw new AppError('A reason is required to release a held P1');
+  await tx(db, async (c) => {
+    const job = await lockJob(c, jobId);
+    if (job.priority !== 'emergency' || job.status !== 'pending_funds' || !job.p1_held_at || job.p1_hold_released_at) {
+      throw new AppError('Only a P1 held at the unfunded threshold can be released on call', 409);
+    }
+    const customer = await one(c, 'SELECT * FROM customers WHERE id = $1', [job.customer_id]);
+    const settings = await getSettings(c);
+    const cap = makeSafeScope(job, customer, settings, 'unfunded');
+    const ex = await one(c, `INSERT INTO funding_exceptions (customer_id, job_id, reason, max_cents, approved_by, kind) VALUES ($1,$2,$3,$4,$5,'on_call_make_safe') RETURNING id`,
+      [job.customer_id, jobId, reason.trim(), cap.commitCents, actor.id]);
+    await releaseForDispatchIfFunded(c, actor, job, settings, { id: ex.id, kind: 'on_call_make_safe' });
+    const after = await one(c, 'SELECT * FROM jobs WHERE id = $1', [jobId]);
+    if (after.p1_scope !== 'make_safe' || after.scope_extended_at) throw new Error('On-call release must be make-safe scope');
+    const heldMinutes = Math.round((new Date(after.p1_hold_released_at).getTime() - new Date(after.p1_held_at).getTime()) / 60000);
+    await recordJobEvent(c, actor, jobId, 'p1.on_call_release', { note: `Released on call for make-safe only after ${heldMinutes} min held: ${reason.trim()}` });
+    await audit(c, actor, { action: 'job.p1_on_call_release', entityType: 'job', entityId: jobId, customerId: job.customer_id,
+      details: { reason: reason.trim(), fundingExceptionId: ex.id, capExGst: cap.capExGstCents, heldMinutes, onCallRight: user.on_call_p1_release } });
+    await notifyStaff(c, ['finance', 'admin'], { template: 'p1_on_call_release', subject: `P1 ${job.ref} released on call (make-safe only)`,
+      body: `${actor.name} released ${job.ref} after ${heldMinutes} min held: ${reason.trim()}\n${link(`/admin/jobs/${jobId}`)}`, idempotencyKey: `p1-on-call-release:${jobId}` });
+  });
+  await autoDispatch(db, jobId);
 }
 
 /** Customer approver approves a job whose estimate exceeds the agreed authority limit. */
@@ -436,7 +488,8 @@ export async function cancelJob(db: Db, actor: Actor, jobId: string, reason: str
     await c.query(`UPDATE job_commitments SET status = 'released', closed_at = now() WHERE job_id = $1 AND status = 'active'`, [jobId]);
     await transitionJob(c, actor, job, 'cancelled', {
       note: `${reason}${billable ? ' (late cancellation: cancellation charges may apply)' : ''}`,
-      set: { cancelled_at: { sql: 'now()' }, cancellation_reason: { value: reason }, cancellation_billable: { value: billable } },
+      set: { cancelled_at: { sql: 'now()' }, cancellation_reason: { value: reason }, cancellation_billable: { value: billable },
+        ...(job.p1_held_at && !job.p1_hold_released_at ? { p1_hold_released_at: { sql: 'now()' }, p1_hold_released_by: { value: actor.id }, p1_hold_release_kind: { value: 'cancelled' } } : {}) },
     });
     if (job.assigned_contractor_id) {
       await notifyContractor(c, job.assigned_contractor_id, {
@@ -461,8 +514,11 @@ export async function closeChecks(db: Db, jobId: string): Promise<CloseCheck> {
   const settings = await getSettings(db);
   const outstanding: string[] = [];
   if (job.status !== 'customer_invoiced') outstanding.push('Customer invoice has not been issued');
-  const report = await maybeOne(db, `SELECT review_status FROM completion_reports WHERE job_id = $1 ORDER BY version DESC LIMIT 1`, [jobId]);
+  const report = await maybeOne(db, `SELECT review_status, made_safe_summary, outstanding_work FROM completion_reports WHERE job_id = $1 ORDER BY version DESC LIMIT 1`, [jobId]);
   if (!job.cancelled_at && report?.review_status !== 'approved') outstanding.push('Completion evidence not approved');
+  if (!job.cancelled_at && isMakeSafeOnly(job) && (!report?.made_safe_summary?.trim() || !report?.outstanding_work?.trim())) {
+    outstanding.push('Make-safe report must state what was made safe and what remains outstanding');
+  }
   const ci = await maybeOne(db, `SELECT * FROM contractor_invoices WHERE job_id = $1 AND status = 'approved'`, [jobId]);
   if (!ci) outstanding.push('Contractor invoice not approved');
   const inv = await maybeOne(db, `SELECT * FROM customer_invoices WHERE job_id = $1 AND status <> 'void'`, [jobId]);

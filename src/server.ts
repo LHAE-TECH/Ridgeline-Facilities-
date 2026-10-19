@@ -6,7 +6,7 @@ import { refreshAllSiteAreas } from './services/sla.js';
 import { startWorker } from './worker.js';
 
 if (config.isProduction) {
-  markProductionDatabase(pool).catch((err) => console.error('Could not mark database as production', err));
+  markProductionDatabase(pool, config.deploymentEnvironment).catch((err) => console.error('Could not mark database as production', err));
 }
 // Site SLA areas are cached on each site; re-resolve them against the current sla_areas setting at start-up.
 refreshAllSiteAreas(pool).catch((err) => console.error('Could not refresh site SLA areas', err));

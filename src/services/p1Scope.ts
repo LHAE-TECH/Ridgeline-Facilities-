@@ -7,7 +7,8 @@ import { applyBps, formatNzd } from '../lib/money.js';
 import { audit } from './audit.js';
 import { lockJob, recordJobEvent } from './jobState.js';
 import { accountPosition } from './ledger.js';
-import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
+import { normaliseNzPhone } from '../lib/phone.js';
+import { link, notifyContractor, notifyCustomer, notifyStaff, queueSms } from './notifications.js';
 import { getSettings, type Settings } from './settings.js';
 
 /**
@@ -65,6 +66,10 @@ export interface UnfundedPosition {
 /**
  * The customer's money at risk without prepaid cover: unpaid invoice balances plus the unfunded part of P1 jobs not
  * yet invoiced (once invoiced, that part is in the receivable, so nothing is counted twice).
+ *
+ * The open part is the recorded unfunded amounts, capped at the account's actual current shortfall (active
+ * commitments minus prepaid balance). So several P1s sharing one balance are counted once, and a top-up reduces the
+ * exposure straight away.
  */
 export async function unfundedPosition(db: Db, customerId: string, settings?: Settings): Promise<UnfundedPosition> {
   const s = settings ?? await getSettings(db);
@@ -76,7 +81,8 @@ export async function unfundedPosition(db: Db, customerId: string, settings?: Se
                         AND status NOT IN ('customer_invoiced','closed','cancelled')),0)::bigint AS open_p1
        FROM customers c WHERE c.id = $1`, [customerId]);
   const receivableCents = Number(r.receivable);
-  const openP1UnfundedCents = Number(r.open_p1);
+  const shortfall = Math.max(0, -(await accountPosition(db, customerId)).availableCents);
+  const openP1UnfundedCents = Math.min(Number(r.open_p1), shortfall);
   const totalCents = receivableCents + openP1UnfundedCents;
   const thresholdCents = suspendThreshold(r, s);
   return { receivableCents, openP1UnfundedCents, totalCents, thresholdCents, suspended: totalCents >= thresholdCents };
@@ -100,7 +106,7 @@ export async function p1Exposure(db: Db) {
   const customers = [];
   for (const r of rows) {
     const pos = await unfundedPosition(db, r.id, settings);
-    customers.push({ id: r.id, name: r.name, accountRef: r.account_ref, openUnfundedCents: Number(r.open_unfunded), openJobs: r.open_jobs,
+    customers.push({ id: r.id, name: r.name, accountRef: r.account_ref, openUnfundedCents: pos.openP1UnfundedCents, openJobs: r.open_jobs,
       invoicedUnpaidCents: Number(r.invoiced_unpaid), unfundedBalanceCents: pos.totalCents, thresholdCents: pos.thresholdCents, suspended: pos.suspended });
   }
   customers.sort((a, b) => (b.openUnfundedCents + b.invoicedUnpaidCents) - (a.openUnfundedCents + a.invoicedUnpaidCents));
@@ -174,4 +180,48 @@ export async function notifyMakeSafeDispatch(c: Db, job: any, scope: MakeSafeSco
       `up to ${formatNzd(scope.capExGstCents)} ex GST. ${detail}\nAny further work needs your approval: ${link(`/app/jobs/${job.id}`)}`,
     idempotencyKey: `p1-make-safe:${job.id}`,
   });
+}
+
+/**
+ * Who gets the SMS when a P1 is held at the threshold: every active staff user with the on-call release right (so the
+ * person alerted can act), plus any escalation phone. Escalation phones that belong to nobody with the right are
+ * returned separately so the settings and users pages can warn about them.
+ */
+export async function p1HoldAlertRecipients(db: Db) {
+  const settings = await getSettings(db);
+  const onCall = await query<{ id: string; name: string; phone: string | null }>(db,
+    `SELECT id, name, phone FROM users WHERE on_call_p1_release AND is_active AND role IN ('admin','ops','finance')`);
+  const releasers = new Set(onCall.map((u) => normaliseNzPhone(u.phone)).filter((p): p is string => !!p));
+  const escalation = settings.escalation_staff_phones.map((p) => normaliseNzPhone(p)).filter((p): p is string => !!p);
+  return {
+    phones: [...new Set([...releasers, ...escalation])],
+    onCallWithoutMobile: onCall.filter((u) => !normaliseNzPhone(u.phone)).map((u) => u.name),
+    alertedWithoutAuthority: escalation.filter((p) => !releasers.has(p)),
+    onCallCount: onCall.length,
+  };
+}
+
+export async function smsP1HoldAlert(db: Db, body: string, key: string): Promise<number> {
+  const { phones } = await p1HoldAlertRecipients(db);
+  for (const phone of phones) await queueSms(db, { phone, template: 'p1_hold_sms', body, idempotencyKey: `${key}:${phone}` });
+  return phones.length;
+}
+
+/** P1 jobs held at the unfunded threshold, with hold durations (reported separately from SLA performance). */
+export async function p1HoldReport(db: Db, period: { from: string; to: string }, customerId?: string | null) {
+  const jobs = await query(db,
+    `SELECT j.id, j.ref, j.title, j.status, j.created_at, j.p1_held_at, j.p1_hold_released_at, j.p1_hold_release_kind, j.sla_onsite_met, j.sla_resolve_met,
+            c.name AS customer_name, s.name AS site_name,
+            ROUND(EXTRACT(EPOCH FROM (COALESCE(j.p1_hold_released_at, now()) - j.p1_held_at)) / 60)::int AS hold_minutes
+       FROM jobs j JOIN customers c ON c.id = j.customer_id JOIN sites s ON s.id = j.site_id
+      WHERE j.p1_held_at IS NOT NULL AND (j.created_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $1::date AND $2::date
+        AND ($3::uuid IS NULL OR j.customer_id = $3) ORDER BY j.created_at`, [period.from, period.to, customerId ?? null]);
+  const released = jobs.filter((j) => j.p1_hold_released_at);
+  return {
+    jobs,
+    count: jobs.length,
+    stillHeld: jobs.filter((j) => !j.p1_hold_released_at).length,
+    avgHoldMinutes: released.length ? Math.round(released.reduce((s, j) => s + j.hold_minutes, 0) / released.length) : null,
+    maxHoldMinutes: jobs.length ? Math.max(...jobs.map((j) => j.hold_minutes)) : null,
+  };
 }

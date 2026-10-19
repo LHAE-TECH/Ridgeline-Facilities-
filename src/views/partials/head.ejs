@@ -8,6 +8,7 @@
 <script src="/static/app.js" defer></script>
 </head>
 <body>
+<% if (locals.deploymentEnvironment === 'staging') { %><div class="notice warn" style="margin:0;border-radius:0;text-align:center"><strong>STAGING</strong>: test environment. Test-mode payments and a test SMS account only; no real customers.</div><% } %>
 <header class="topbar"><div class="inner">
   <a class="brand" href="/">Ridgeline Facilities<% if (actor) { %><span><%= orgName %></span><% } %></a>
   <% if (actor) { %>
@@ -16,7 +17,7 @@
       ? [['/app','Dashboard'],['/app/jobs','Jobs'],['/app/jobs/new','Book a job'],['/app/account','Account'],['/app/invoices','Invoices']].concat(locals.reportsEnabled ? [['/app/reports','Reports']] : []).concat([['/app/properties','Properties']]).concat(actor.customerRole === 'owner' ? [['/app/users','Contacts']] : [])
       : actor.role === 'contractor'
       ? [['/c','Jobs'],['/c/invoices','Invoices & payments'],['/c/profile','Profile & compliance']]
-      : [['/admin','Dashboard'],['/admin/dispatch','Dispatch'],['/admin/jobs','Jobs'],['/admin/customers','Customers'],['/admin/contractors','Contractors'],
+      : [['/admin','Dashboard'],['/admin/dispatch','Dispatch'],['/admin/jobs','Jobs'],['/admin/follow-ups','Follow-ups'],['/admin/customers','Customers'],['/admin/contractors','Contractors'],
          ['/admin/contractor-invoices','Contractor invoices'],['/admin/customer-invoices','Customer invoices'],['/admin/payments','Receipts'],['/admin/payables','Payables'],
          ['/admin/disputes','Disputes'],['/admin/refunds','Refunds'],['/admin/settings','Settings'],['/admin/reports','Reports']]; %>
     <% links.forEach(function (l) { const active = l[0] === path || (l[0] !== '/app' && l[0] !== '/c' && l[0] !== '/admin' && path.indexOf(l[0]) === 0 && !(l[0] === '/app/jobs' && path === '/app/jobs/new')); %>

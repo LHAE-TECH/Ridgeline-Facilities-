@@ -8,11 +8,12 @@ Estimates for a small-to-medium operation (tens of customer accounts, up to a fe
 | --- | --- | --- | --- | --- |
 | Application hosting | Render web service | Starter (0.5 CPU, 512 MB) | US$7 (≈ NZ$12) | Standard (US$25) if the app needs more memory as usage grows |
 | Managed PostgreSQL | Render Postgres | Basic 256 MB–1 GB | US$6–20 (≈ NZ$10–34) | Plan names and prices differ between sources; check Render's pricing page. The free tier expires and is not suitable |
+| Staging environment | Render web service + Postgres + 1 GB disk | Starter + Basic | ≈ US$13–14 (≈ NZ$23) | Needed for the go-live gates and for testing changes before production. Can be suspended between releases to save cost |
 | File storage | Render persistent disk | 5 GB | ≈ US$1.25 (≈ NZ$2) | Or Cloudflare R2: first 10 GB free, then about US$0.015/GB, with no egress fees |
 | Transactional email | Postmark (or Amazon SES) | 10,000 emails | US$15 (≈ NZ$26) | SES is cheaper (about US$0.10 per 1,000) but needs more setup |
 | Domain / DNS | Existing ridgelinefacilities.com | – | Existing cost | Subdomain `app.` costs nothing extra |
 | Off-site backups | Cloudflare R2 / Backblaze B2 | < 10 GB | NZ$0–3 | |
-| **Total required** | | | **≈ NZ$50–75 / month** | Plus SMS (about NZ$30–50/month at the volume above) once Twilio is enabled |
+| **Total required** | | | **≈ NZ$75–100 / month** (incl. staging ≈ NZ$23) | Plus SMS (about NZ$30–50/month at the volume above) once Twilio is enabled |
 
 ## Optional
 

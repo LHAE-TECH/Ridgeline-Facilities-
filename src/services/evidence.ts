@@ -5,7 +5,7 @@ import { isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { formatNzd, parseQuantity } from '../lib/money.js';
 import { audit } from './audit.js';
-import { recordScopeExtension } from './p1Scope.js';
+import { isMakeSafeOnly, recordScopeExtension } from './p1Scope.js';
 import { lockJob, recordJobEvent, transitionJob } from './jobState.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
 import { type CostLine, loadApprovedRules, priceCostLines } from './pricing.js';
@@ -123,6 +123,14 @@ export interface CompletionInput {
   siteNotes?: string;
   issuesFound?: string;
   acknowledgedByName?: string;
+  /** Make-safe jobs only (both required): what was made safe, and what remains outstanding. */
+  madeSafeSummary?: string;
+  outstandingWork?: string;
+}
+
+/** A job dispatched for make-safe scope that has not been extended: its report must say what was made safe and what is left. */
+export function makeSafeReportRequired(job: { p1_scope?: string | null; scope_extended_at?: unknown }): boolean {
+  return isMakeSafeOnly(job);
 }
 
 export interface EvidenceStatus { complete: boolean; missing: string[]; counts: Record<string, number> }
@@ -159,16 +167,32 @@ export async function completeJob(db: Db, actor: Actor, jobId: string, input: Co
     if (!['in_progress', 'evidence_rejected'].includes(job.status)) throw new AppError('Job is not in progress', 409);
     const status = await evidenceStatus(c, jobId, input);
     if (!status.complete) throw new AppError(`Mandatory evidence missing: ${status.missing.join('; ')}`, 422, 'evidence_incomplete');
+    const makeSafe = makeSafeReportRequired(job);
+    if (makeSafe && (!input.madeSafeSummary?.trim() || !input.outstandingWork?.trim())) {
+      throw new AppError('This was a make-safe job: describe what was made safe and what remains outstanding (both required)', 422, 'make_safe_report_incomplete');
+    }
 
     const materials = (input.materials ?? []).map((m) => ({ description: m.description.trim(), quantityMilli: parseQuantity(m.quantity), unitCostCents: m.unitCostCents }));
     const flags = await automaticFlags(c, job, input, cleanGeo(geo));
     const v = await one<{ v: number }>(c, 'SELECT COALESCE(MAX(version),0)::int + 1 AS v FROM completion_reports WHERE job_id = $1', [jobId]);
     const report = await one(c,
       `INSERT INTO completion_reports (job_id, version, work_performed, labour_minutes, workers, materials, site_notes, issues_found,
-          acknowledged_by_name, acknowledged_at, submitted_by, review_flags)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, CASE WHEN $9::text IS NOT NULL THEN now() END, $10, $11) RETURNING *`,
+          acknowledged_by_name, acknowledged_at, submitted_by, review_flags, made_safe_summary, outstanding_work)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, CASE WHEN $9::text IS NOT NULL THEN now() END, $10, $11, $12, $13) RETURNING *`,
       [jobId, v.v, input.workPerformed.trim(), input.labourMinutes, input.workers ?? 1, JSON.stringify(materials), input.siteNotes || null,
-       input.issuesFound || null, input.acknowledgedByName?.trim() || null, actor.id, JSON.stringify(flags)]);
+       input.issuesFound || null, input.acknowledgedByName?.trim() || null, actor.id, JSON.stringify(flags),
+       input.madeSafeSummary?.trim() || null, input.outstandingWork?.trim() || null]);
+    if (makeSafe) {
+      // The outstanding work becomes a follow-up suggestion that staff must book or dismiss with a reason.
+      await c.query(
+        `INSERT INTO follow_up_suggestions (job_id, customer_id, site_id, trade_id, completion_report_id, description)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (job_id) WHERE status = 'open' DO UPDATE SET description = EXCLUDED.description, completion_report_id = EXCLUDED.completion_report_id`,
+        [jobId, job.customer_id, job.site_id, job.trade_id, report.id, input.outstandingWork!.trim()]);
+      await notifyStaff(c, ['ops', 'admin'], { template: 'follow_up_suggested', subject: `Follow-up needed after make-safe: ${job.ref}`,
+        body: `Made safe: ${input.madeSafeSummary!.trim()}\nOutstanding: ${input.outstandingWork!.trim()}\nBook or dismiss the follow-up: ${link('/admin/follow-ups')}`,
+        idempotencyKey: `follow-up:${report.id}` });
+    }
     const g = cleanGeo(geo);
     await transitionJob(c, actor, job, 'evidence_submitted', {
       eventType: v.v === 1 ? 'completed' : 'evidence_resubmitted', ...g,

@@ -2,6 +2,15 @@
 <div class="page-head"><div><h1><%= job.ref %>: <%= job.title %></h1><small><a href="/admin/customers/<%= job.customer_id %>"><%= job.customer_name %></a> · <%= job.site_name %>, <%= job.site_region %><%= job.unit_label ? ' · Unit ' + job.unit_label : '' %> · <%= job.trade_name %> · <strong><%= prio(job.priority) %></strong></small></div>
 <div><%- include('../partials/status', { s: job.status }) %></div></div>
 <% if (job.hold_reason) { %><div class="notice"><%= job.hold_reason %></div><% } %>
+<% if (job.priority === 'emergency' && job.p1_held_at && !job.p1_hold_released_at && job.status === 'pending_funds') { %>
+<div class="card"><h2>P1 held: unfunded threshold reached</h2>
+  <%- include('../partials/p1-hold', { job: job }) %>
+  <% if (canOnCallRelease) { %>
+  <form method="post" action="/admin/jobs/<%= job.id %>/on-call-release" class="inline-form" data-confirm="Release this P1 for make-safe work only?"><%- include('../partials/csrf') %>
+    <input name="reason" required placeholder="Reason (e.g. occupant at risk; spoke to body corporate chair)"><button type="submit">Release for make-safe</button></form>
+  <p class="field-hint">On-call release dispatches make-safe work only, up to the customer's cap. It is recorded with your reason in the job history and audit log.</p>
+  <% } else { %><p class="muted">You do not hold the on-call P1 release right. Contact the on-call holder or finance.</p><% } %>
+</div><% } %>
 <% if (job.p1_scope === 'make_safe') { %><div class="card"><h2>Emergency scope</h2>
   <% if (!job.scope_extended_at) { %><p><span class="badge err">Make-safe only</span> (<%= job.p1_scope_reason.replace(/_/g, ' ') %>) · cap <%= money(job.p1_scope_cap_ex_gst_cents) %> ex GST · contractor cost authorised <%= money(job.authorised_contractor_cost_cents) %> ex GST · unfunded <%= money(job.unfunded_cents) %></p>
     <p class="field-hint">Work beyond make-safe needs the customer's approval (their job page, or a quote/variation they approve) or a staff override with a reason. Response targets are unaffected.</p>
@@ -10,9 +19,14 @@
       <input name="reason" required placeholder="Reason for staff override"><button class="small secondary" type="submit">Override scope</button></form><% } %>
   <% } else { %><p><span class="badge ok">Extended</span> <%= dt(job.scope_extended_at) %> by <%= job.scope_extension_kind === 'customer_approval' ? 'customer approval' : 'staff override' %>: <%= job.scope_extension_reason %> · unfunded <%= money(job.unfunded_cents) %></p><% } %>
 </div><% } %>
+<% if (followUps.length) { %><div class="card"><h2>Follow-up after make-safe</h2><% followUps.forEach(function (f) { %>
+  <p><strong><%= f.status === 'open' ? 'Open' : f.status === 'booked' ? 'Booked' : 'Dismissed' %>:</strong> <%= f.description %>
+  <% if (f.follow_up_job_id) { %> · <a href="/admin/jobs/<%= f.follow_up_job_id %>">follow-up job</a><% } %><% if (f.decision_note) { %> · <%= f.decision_note %><% } %>
+  <% if (f.status === 'open') { %> · <a href="/admin/follow-ups">book or dismiss</a><% } %></p><% }) %></div><% } %>
 <% if (job.priority_note) { %><div class="notice"><strong>Priority:</strong> <%= job.priority_note %></div><% } %>
 <div class="card"><h2>Service level</h2>
   <%- include('../partials/job-times', { job: job }) %>
+  <% if (job.p1_hold_released_at) { %><%- include('../partials/p1-hold', { job: job }) %><% } %>
   <% if (!job.sla_started_at) { %><p class="muted">P2–P4 clocks start when the job is released to dispatch.</p><% } else { %>
   <div class="grid-2">
     <div><strong><%= job.sla_targets.onsite %></strong><br>Due <%= dt(job.sla_onsite_due) %><br>
@@ -87,7 +101,8 @@
     <form method="post" action="/admin/evidence/<%= e.id %>/withdraw" class="inline-form"><%- include('../partials/csrf') %><input type="hidden" name="back" value="/admin/jobs/<%= job.id %>"><input name="reason" required placeholder="Withdraw reason"><button class="small secondary" type="submit">Withdraw</button></form><% } %></figcaption></figure><% }) %></div>
   <% reports.forEach(function (r) { %>
   <div class="card" style="background:var(--bg)"><h3>Completion report v<%= r.version %> <%- include('../partials/status', { s: r.review_status }) %></h3>
-    <p><%= r.work_performed %></p><p class="muted">Labour <%= Math.floor(r.labour_minutes/60) %> h <%= r.labour_minutes % 60 %> min × <%= r.workers %> worker(s) · submitted <%= dt(r.submitted_at) %><% if (r.acknowledged_by_name) { %> · acknowledged by <%= r.acknowledged_by_name %><% } %></p>
+    <p><%= r.work_performed %></p>
+    <% if (r.made_safe_summary || r.outstanding_work) { %><dl class="kv"><dt>Made safe</dt><dd><%= r.made_safe_summary || '—' %></dd><dt>Outstanding</dt><dd><%= r.outstanding_work || '—' %></dd></dl><% } %><p class="muted">Labour <%= Math.floor(r.labour_minutes/60) %> h <%= r.labour_minutes % 60 %> min × <%= r.workers %> worker(s) · submitted <%= dt(r.submitted_at) %><% if (r.acknowledged_by_name) { %> · acknowledged by <%= r.acknowledged_by_name %><% } %></p>
     <% if (r.materials.length) { %><p>Materials: <%= r.materials.map(function (m) { return m.description + ' × ' + qtyFmt(m.quantityMilli) + ' @ ' + money(m.unitCostCents); }).join('; ') %></p><% } %>
     <% if (r.issues_found) { %><p>Issues: <%= r.issues_found %></p><% } %><% if (r.site_notes) { %><p>Notes: <%= r.site_notes %></p><% } %>
     <% r.review_flags.forEach(function (f) { %><p class="notice"><%= f.message %></p><% }) %>

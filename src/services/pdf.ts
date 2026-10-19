@@ -186,6 +186,12 @@ export async function completionReportPdf(db: Db, jobId: string): Promise<Buffer
     if (report) {
       doc.moveDown().font('Helvetica-Bold').text('Work performed');
       doc.font('Helvetica').text(report.work_performed);
+      if (report.made_safe_summary || report.outstanding_work) {
+        doc.moveDown().font('Helvetica-Bold').text('Made safe');
+        doc.font('Helvetica').text(report.made_safe_summary || '-');
+        doc.moveDown().font('Helvetica-Bold').text('Still outstanding (not part of this make-safe visit)');
+        doc.font('Helvetica').text(report.outstanding_work || '-');
+      }
       doc.moveDown(0.5).text(`Labour: ${Math.floor(report.labour_minutes / 60)} h ${report.labour_minutes % 60} min (${report.workers} worker(s))`);
       if ((report.materials ?? []).length) {
         doc.moveDown(0.5).font('Helvetica-Bold').text('Materials used');
@@ -257,6 +263,8 @@ export async function monthlyReportPdf(db: Db, customerId: string, month: string
   const sla = await slaPerformance(db, { from, to }, customerId);
   const { areaUnconfirmedJobs } = await import('./sla.js');
   const unconfirmed = await areaUnconfirmedJobs(db, { from, to }, customerId);
+  const { p1HoldReport } = await import('./p1Scope.js');
+  const holds = await p1HoldReport(db, { from, to }, customerId);
   const jobs = await query(db,
     `SELECT j.ref, j.title, j.priority, j.status, j.sla_onsite_met, j.sla_resolve_met, j.created_at, j.released_at, s.name AS site_name,
             COALESCE((j.sla_targets->>'area_confirmed')::boolean, true) AS area_confirmed,
@@ -292,6 +300,12 @@ export async function monthlyReportPdf(db: Db, customerId: string, month: string
       jobs.map((j) => [j.ref, `${j.site_name}: ${j.title}`, priorityLabel(j.priority), fmtDateTime(j.created_at), j.released_at ? fmtDateTime(j.released_at) : 'Not released',
         !j.area_confirmed ? 'Not measured' : j.sla_onsite_met === null ? (j.status === 'cancelled' ? 'Cancelled' : 'Open') : j.sla_onsite_met && j.sla_resolve_met !== false ? 'Met' : 'Missed',
         j.invoiced ? formatNzd(j.invoiced) : '—']));
+    if (holds.count) {
+      doc.moveDown().font('Helvetica-Bold').text(`Emergency jobs held before dispatch (${holds.count})`);
+      doc.font('Helvetica').fontSize(8).fillColor('#555').text('These emergencies were held because the account\'s unpaid and unfunded balance had reached its limit. Service-level clocks were not paused: they ran from booking throughout, and the figures above include them.').fillColor('#000').fontSize(10);
+      table(doc, [{ label: 'Job', width: 80 }, { label: 'Site / description', width: 220 }, { label: 'Booked', width: 110 }, { label: 'Held', width: 90, align: 'right' }],
+        holds.jobs.map((j: any) => [j.ref, `${j.site_name}: ${j.title}`, fmtDateTime(j.created_at), j.p1_hold_released_at ? `${j.hold_minutes} min` : `${j.hold_minutes} min (held)`]));
+    }
     if (unconfirmed.length) {
       doc.moveDown().font('Helvetica-Bold').text(`Not measured: service area being confirmed (${unconfirmed.length})`);
       doc.font('Helvetica').fontSize(8).fillColor('#555').text('These jobs are at a site whose service area is still being confirmed. They are excluded from the service-level figures above.').fillColor('#000').fontSize(10);

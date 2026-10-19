@@ -53,6 +53,11 @@
     <% if (status && !status.complete) { %><div class="notice">Still required: <%= status.missing.join('; ') %></div><% } %>
     <form method="post" action="/c/jobs/<%= job.id %>/complete" class="stack" data-geo><%- include('../partials/csrf') %>
       <div><label>Work performed</label><textarea name="work_performed" required rows="3"><%= reports[0] ? reports[0].work_performed : '' %></textarea></div>
+      <% if (job.p1_scope === 'make_safe' && !job.scope_extended_at) { %>
+      <div class="notice warn">Make-safe job: both fields below are required. Ridgeline will arrange the outstanding work separately.</div>
+      <div><label>What was made safe (required)</label><textarea name="made_safe_summary" required rows="2" placeholder="e.g. Water isolated at the meter, damaged ceiling area cordoned off, power to the circuit isolated"><%= reports[0] ? reports[0].made_safe_summary || '' : '' %></textarea></div>
+      <div><label>What remains outstanding (required)</label><textarea name="outstanding_work" required rows="2" placeholder="e.g. Replace burst section of hot water pipe; ceiling repair; electrician to re-test circuit"><%= reports[0] ? reports[0].outstanding_work || '' : '' %></textarea></div>
+      <% } %>
       <div class="grid-3"><div><label>Labour hours (total)</label><input name="labour_hours" inputmode="decimal" required></div><div><label>Workers</label><input name="workers" type="number" min="1" value="1"></div><div></div></div>
       <h3>Materials used</h3>
       <div id="materials"><div class="grid-3" data-row><div><label>Material</label><input name="material_description"></div><div><label>Quantity</label><input name="material_quantity" inputmode="decimal"></div><div><label>Unit cost (ex GST)</label><input name="material_cost" inputmode="decimal"></div></div></div>

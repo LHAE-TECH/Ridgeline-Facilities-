@@ -1,0 +1,5 @@
+<% if (job.p1_held_at) { const end = job.p1_hold_released_at ? new Date(job.p1_hold_released_at) : new Date(); const mins = Math.max(0, Math.round((end - new Date(job.p1_held_at)) / 60000)); %>
+<p class="field-hint"><strong>Held at the unfunded threshold:</strong> <%= mins >= 120 ? (mins / 60).toFixed(1) + ' h' : mins + ' min' %>
+  (from <%= dt(job.p1_held_at) %><% if (job.p1_hold_released_at) { %> to <%= dt(job.p1_hold_released_at) %>, <%= { on_call: 'released on call', funding_exception: 'released by funding exception', funded: 'released when funded', cancelled: 'job cancelled' }[job.p1_hold_release_kind] || 'released' %><% } else { %>, <strong>still held</strong><% } %>).
+  The P1 clock was not paused: targets run from booking.</p>
+<% } %>

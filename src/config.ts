@@ -11,6 +11,8 @@ export const config = {
   env: env.NODE_ENV ?? 'development',
   isProduction: env.NODE_ENV === 'production',
   isTest: env.NODE_ENV === 'test',
+  /** 'production' or 'staging' on Render (both run NODE_ENV=production); staging shows a banner and refuses live keys. */
+  deploymentEnvironment: (env.DEPLOYMENT_ENVIRONMENT ?? (env.NODE_ENV === 'production' ? 'production' : env.NODE_ENV ?? 'development')) as string,
   port: Number(env.PORT ?? 3000),
   baseUrl: (env.APP_BASE_URL ?? `http://localhost:${env.PORT ?? 3000}`).replace(/\/$/, ''),
   databaseUrl: env.DATABASE_URL ?? 'postgres://ridgeline:ridgeline@localhost:5432/ridgeline_dev',
@@ -61,6 +63,10 @@ export const config = {
   },
 };
 
+// Staging must never take real money: refuse to start with a live Stripe key.
+if (config.deploymentEnvironment === 'staging' && config.stripe.secretKey.startsWith('sk_live_')) {
+  throw new Error('Staging refuses to start with a live Stripe key (sk_live_…); use test-mode keys');
+}
 if (config.isProduction && config.sessionSecret === 'dev-only-session-secret') {
   throw new Error('SESSION_SECRET must be set in production');
 }

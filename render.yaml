@@ -1,11 +1,17 @@
-# Render Blueprint: one web service (worker in-process) + managed Postgres + persistent disk for uploads.
-# Secrets marked sync:false are entered in the Render dashboard, never committed.
+# Render Blueprint: PRODUCTION and STAGING, each a web service (worker in-process) + its own managed Postgres +
+# its own persistent disk for uploads. Secrets marked sync:false are entered in the Render dashboard, never committed.
+#
+# Staging is where the go-live gates run first (docs/DEPLOYMENT.md): it auto-deploys from main, uses Stripe TEST keys
+# (it refuses to start with a live key) and a separate low-spend-cap Twilio subaccount, and shows a STAGING banner.
+# Production deploys manually, after the change has passed on staging.
 services:
   - type: web
     name: ridgeline-facilities
     runtime: docker
     plan: starter
     region: singapore
+    branch: main
+    autoDeploy: false   # promote to production deliberately, after staging
     healthCheckPath: /healthz
     disk:
       name: uploads
@@ -13,6 +19,8 @@ services:
       sizeGB: 5
     envVars:
       - key: NODE_ENV
+        value: production
+      - key: DEPLOYMENT_ENVIRONMENT
         value: production
       - key: DATABASE_URL
         fromDatabase: { name: ridgeline-db, property: connectionString }
@@ -40,12 +48,77 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: TWILIO_MESSAGING_SERVICE_SID
+        sync: false
       - key: XERO_CLIENT_ID
         sync: false
       - key: XERO_CLIENT_SECRET
         sync: false
+
+  - type: web
+    name: ridgeline-facilities-staging
+    runtime: docker
+    plan: starter
+    region: singapore
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /healthz
+    disk:
+      name: uploads-staging
+      mountPath: /data/uploads
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEPLOYMENT_ENVIRONMENT
+        value: staging
+      - key: DATABASE_URL
+        fromDatabase: { name: ridgeline-db-staging, property: connectionString }
+      - key: DATABASE_SSL
+        value: "false"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: UPLOAD_DIR
+        value: /data/uploads
+      - key: APP_BASE_URL          # e.g. https://ridgeline-facilities-staging.onrender.com
+        sync: false
+      - key: SEED_ADMIN_EMAIL
+        sync: false
+      - key: SEED_ADMIN_PASSWORD
+        sync: false
+      - key: SMTP_HOST             # use a sandbox/test inbox; staging must not email real customers
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: STRIPE_SECRET_KEY     # sk_test_… only (staging refuses sk_live_…)
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: TWILIO_ACCOUNT_SID    # dedicated test subaccount with a low spend cap
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM_NUMBER
+        sync: false
+      - key: TWILIO_MESSAGING_SERVICE_SID
+        sync: false
+
 databases:
   - name: ridgeline-db
+    plan: basic-256mb
+    region: singapore
+    postgresMajorVersion: "16"
+  - name: ridgeline-db-staging
     plan: basic-256mb
     region: singapore
     postgresMajorVersion: "16"

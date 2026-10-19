@@ -1,7 +1,8 @@
 import type { Db } from '../db.js';
 import { one, query } from '../db.js';
 import { accountBalances } from './ledger.js';
-import { p1Exposure } from './p1Scope.js';
+import { openFollowUps } from './followUps.js';
+import { p1Exposure, p1HoldReport } from './p1Scope.js';
 import { areaUnconfirmedJobs, openSlaJobs, slaPerformance, unconfirmedSites } from './sla.js';
 
 /**
@@ -31,6 +32,8 @@ export async function dashboard(db: Db, period: { from: string; to: string }) {
       AND (sla_started_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $1::date AND $2::date`, [period.from, period.to]);
   const areaUnconfirmed = { jobs: await areaUnconfirmedJobs(db, period), sites: await unconfirmedSites(db) };
   const unfundedP1 = await p1Exposure(db);
+  const p1Holds = await p1HoldReport(db, period);
+  const followUps = await openFollowUps(db);
   const ci = await one(db, `SELECT COUNT(*) FILTER (WHERE status IN ('submitted','flagged'))::int AS awaiting, COUNT(*) FILTER (WHERE status = 'flagged')::int AS flagged FROM contractor_invoices`);
   const custInv = await one(db, `SELECT COUNT(*) FILTER (WHERE status = 'draft')::int AS drafts,
       COUNT(*) FILTER (WHERE status <> 'draft' AND status <> 'void' AND issue_date BETWEEN $1 AND $2)::int AS issued_in_period,
@@ -69,6 +72,8 @@ export async function dashboard(db: Db, period: { from: string; to: string }) {
     period,
     areaUnconfirmed,
     unfundedP1,
+    p1Holds,
+    followUps,
     gl,
     balanceSheet: {
       cash: (gl.BANK ?? 0) + (gl.STRIPE_CLEARING ?? 0),

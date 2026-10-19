@@ -9,11 +9,13 @@ import { contractorProfile, createContractor, DOCUMENT_TYPES, reviewComplianceDo
 import { applyPrepaidToInvoice, createCreditNote, getCustomerInvoiceForActor, issueCustomerInvoice, outstandingCents, recalculateDraft } from '../services/customerInvoices.js';
 import { CUSTOMER_CATEGORIES, hashPassword, NZ_REGIONS, portfolio, SERVICE_LEVELS, setSiteArea, updateCustomerTerms } from '../services/customers.js';
 import { assessContractorsForJob, dispatchJob, manualAssign, rankForSla, unassign } from '../services/dispatch.js';
-import { extendP1Scope, unfundedPosition } from '../services/p1Scope.js';
+import { extendP1Scope, p1HoldAlertRecipients, unfundedPosition } from '../services/p1Scope.js';
+import { bookFollowUp, dismissFollowUp, followUpsForJob, openFollowUps } from '../services/followUps.js';
+import { isNzMobile, normaliseNzPhone } from '../lib/phone.js';
 import { areaForSite, PRIORITY_META, slaLegState, TRIAGE_QUESTIONS } from '../services/sla.js';
 import { raiseDispute, resolveDispute, setDisputeInvestigating } from '../services/disputes.js';
 import { reviewEvidence, reviewQuote, withdrawEvidence } from '../services/evidence.js';
-import { cancelJob, closeChecks, closeJob, getJobForActor, grantFundingException, reclassifyJob } from '../services/jobs.js';
+import { cancelJob, closeChecks, closeJob, getJobForActor, grantFundingException, reclassifyJob, releaseHeldP1OnCall } from '../services/jobs.js';
 import { JOB_STATUS_LABELS } from '../services/jobState.js';
 import { accountBalances, accountPosition, reconcileCustomerBalance } from '../services/ledger.js';
 import { approveForPayment, confirmContractorPayment, createPaymentBatch, decideAdjustment, exportBatchCsv, failContractorPayment, holdPayable,
@@ -182,7 +184,10 @@ adminRouter.get('/jobs/:id', async (req, res) => {
     resolve: slaLegState(job.sla_resolve_due, job.sla_started_at, job.made_safe_at ?? job.completed_at, settings.sla_at_risk_bps),
   };
   const area = areaForSite({ suburb: job.site_suburb, city: job.site_city, sla_area_override: job.site_sla_area_override }, settings.sla_areas);
-  res.render('admin/job', { job, events, offers, evidence, reports, quotes, contractorInvoices, customerInvoice, disputes, candidates, ranked, checks, commitment, auditRows,
+  const me = await one(pool, 'SELECT on_call_p1_release FROM users WHERE id = $1', [a.id]);
+  const canOnCallRelease = me.on_call_p1_release || ['admin', 'finance'].includes(a.role);
+  const followUps = await followUpsForJob(pool, job.id);
+  res.render('admin/job', { canOnCallRelease, followUps, job, events, offers, evidence, reports, quotes, contractorInvoices, customerInvoice, disputes, candidates, ranked, checks, commitment, auditRows,
     sla, area, areas: settings.sla_areas, priorityMeta: PRIORITY_META, triageQuestions: TRIAGE_QUESTIONS });
 });
 
@@ -193,6 +198,21 @@ adminRouter.post('/jobs/:id/dispatch', action(async (req) => {
 adminRouter.post('/jobs/:id/priority', action(async (req) => {
   await reclassifyJob(pool, actor(req), pid(req), str(req.body.priority) as any, str(req.body.reason));
   return { redirect: `/admin/jobs/${pid(req)}`, message: 'Priority reclassified and SLA targets recalculated' };
+}));
+adminRouter.post('/jobs/:id/on-call-release', action(async (req) => {
+  await releaseHeldP1OnCall(pool, actor(req), pid(req), str(req.body.reason));
+  return { redirect: `/admin/jobs/${pid(req)}`, message: 'P1 released for make-safe work; reason recorded' };
+}));
+adminRouter.get('/follow-ups', async (_req, res) => {
+  res.render('admin/follow-ups', { followUps: await openFollowUps(pool), priorityMeta: PRIORITY_META });
+});
+adminRouter.post('/follow-ups/:id/book', action(async (req) => {
+  const job = await bookFollowUp(pool, actor(req), pid(req), { priority: str(req.body.priority) as any, preferredStart: optStr(req.body.preferred_start) ?? null, note: optStr(req.body.note) });
+  return { redirect: `/admin/jobs/${job.id}`, message: `Follow-up job ${job.ref} booked` };
+}));
+adminRouter.post('/follow-ups/:id/dismiss', action(async (req) => {
+  await dismissFollowUp(pool, actor(req), pid(req), str(req.body.reason));
+  return { redirect: '/admin/follow-ups', message: 'Follow-up dismissed; reason recorded' };
 }));
 adminRouter.post('/jobs/:id/scope', action(async (req) => {
   await extendP1Scope(pool, actor(req), pid(req), str(req.body.reason));
@@ -629,20 +649,37 @@ adminRouter.post('/holidays', action(async (req) => {
 // ---------------------------------------------------------------- Users, notifications, integrations, audit, reports
 adminRouter.get('/users', async (req, res) => {
   requireAdmin(req);
-  const users = await query(pool, `SELECT id, name, email, role, is_active, last_login_at FROM users WHERE role IN ('admin','ops','finance') ORDER BY role, name`);
-  res.render('admin/users', { users });
+  const users = await query(pool, `SELECT id, name, email, phone, role, is_active, last_login_at, on_call_p1_release FROM users WHERE role IN ('admin','ops','finance') ORDER BY role, name`);
+  res.render('admin/users', { users, holdAlerts: await p1HoldAlertRecipients(pool) });
 });
 adminRouter.post('/users', action(async (req) => {
   requireAdmin(req);
   const role = str(req.body.role);
   if (!['admin', 'ops', 'finance'].includes(role)) throw new AppError('Invalid role');
-  const u = await one(pool, `INSERT INTO users (email, password_hash, name, role) VALUES ($1,$2,$3,$4) RETURNING id`,
-    [str(req.body.email), await hashPassword(str(req.body.password)), str(req.body.name), role]).catch((e) => {
+  const phone = optStr(req.body.phone);
+  if (phone && !isNzMobile(normaliseNzPhone(phone))) throw new AppError('Mobile must be a NZ mobile number');
+  const u = await one(pool, `INSERT INTO users (email, password_hash, name, role, phone) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+    [str(req.body.email), await hashPassword(str(req.body.password)), str(req.body.name), role, phone ? normaliseNzPhone(phone) : null]).catch((e) => {
       if (e.code === '23505') throw new AppError('Email already in use');
       throw e;
     });
   await audit(pool, actor(req), { action: 'staff_user.created', entityType: 'user', entityId: u.id, details: { role } });
   return { redirect: '/admin/users', message: 'Staff user created' };
+}));
+/** Grants or removes the on-call P1 release right (make-safe release of a P1 held at the unfunded threshold). */
+adminRouter.post('/users/:id/on-call', action(async (req) => {
+  requireAdmin(req);
+  const grant = bool(req.body.on_call);
+  const phone = optStr(req.body.phone);
+  if (phone && !isNzMobile(normaliseNzPhone(phone))) throw new AppError('Mobile must be a NZ mobile number');
+  const u = await maybeOne(pool, `SELECT id, phone, role FROM users WHERE id = $1 AND role IN ('admin','ops','finance')`, [pid(req)]);
+  if (!u) throw new AppError('Staff user not found', 404);
+  const newPhone = phone ? normaliseNzPhone(phone) : u.phone;
+  // The hold alert goes by SMS, so the right is only useful with a mobile to receive it.
+  if (grant && !isNzMobile(newPhone)) throw new AppError('Add a NZ mobile number: the P1 hold alert is sent by SMS to on-call release holders');
+  await pool.query('UPDATE users SET on_call_p1_release = $2, phone = $3 WHERE id = $1', [u.id, grant, newPhone]);
+  await audit(pool, actor(req), { action: grant ? 'user.on_call_p1_granted' : 'user.on_call_p1_removed', entityType: 'user', entityId: u.id, details: { phone: newPhone } });
+  return { redirect: '/admin/users', message: grant ? 'On-call P1 release granted' : 'On-call P1 release removed' };
 }));
 adminRouter.post('/users/:id/active', action(async (req) => {
   requireAdmin(req);

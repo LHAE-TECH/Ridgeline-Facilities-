@@ -142,7 +142,9 @@ export async function refreshSiteArea(db: Db, siteId: string, settings?: Setting
   const s = settings ?? await getSettings(db);
   const site = await one(db, 'SELECT id, suburb, city, sla_area_override, sla_area_source FROM sites WHERE id = $1', [siteId]);
   const area = areaForSite(site, s.sla_areas);
-  await db.query('UPDATE sites SET sla_area = $2, sla_area_source = $3 WHERE id = $1', [siteId, area.area?.name ?? null, area.source]);
+  // Write only on change: bookings call this, and an unconditional update would lock the site row on every booking.
+  await db.query(`UPDATE sites SET sla_area = $2, sla_area_source = $3 WHERE id = $1
+    AND (sla_area IS DISTINCT FROM $2 OR sla_area_source IS DISTINCT FROM $3)`, [siteId, area.area?.name ?? null, area.source]);
   if (area.source !== 'unconfirmed') {
     const pending = await query(db,
       `SELECT * FROM jobs WHERE site_id = $1 AND status <> 'cancelled' AND sla_started_at IS NOT NULL
