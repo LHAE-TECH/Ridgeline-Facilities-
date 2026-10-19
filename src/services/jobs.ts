@@ -12,7 +12,7 @@ import { accountPosition, type AccountPosition } from './ledger.js';
 import { link, notifyContractor, notifyCustomer, notifyStaff } from './notifications.js';
 import { type Priority, buildEstimateCostLines, loadApprovedRules, priceCostLines, type PricingResult } from './pricing.js';
 import { getSettings, type Settings } from './settings.js';
-import { classifyPriority, isEscalatedAboveTriage, priorityLabel, startSlaClock, type TriageAnswers } from './sla.js';
+import { classifyPriority, isEscalatedAboveTriage, priorityLabel, reclassifyPriority, startSlaClock, type TriageAnswers } from './sla.js';
 import { TIME_WINDOW_LABELS, type TimeWindow, classifyTime, loadHolidays } from './timeWindows.js';
 
 export const PRIORITIES: Priority[] = ['emergency', 'urgent', 'standard', 'scheduled'];
@@ -86,7 +86,8 @@ export function evaluateFunding(position: AccountPosition, chargeCents: number, 
     requiredTopUp = Math.max(requiredTopUp, chargeCents - position.availableCents);
   }
   if (reasons.length === 0) return { ok: true, emergencyOverride: false, reasons, position, requiredTopUpCents: 0 };
-  if (priority === 'emergency' && settings.allow_emergency_below_minimum) {
+  // Nothing holds a P1: emergencies are always released and finance follows up the shortfall.
+  if (priority === 'emergency') {
     return { ok: true, emergencyOverride: true, reasons, position, requiredTopUpCents: requiredTopUp };
   }
   return { ok: false, emergencyOverride: false, reasons, position, requiredTopUpCents: requiredTopUp };
@@ -181,13 +182,28 @@ export async function createBooking(db: Db, actor: Actor, rawInput: BookingInput
        resolved.suggested, resolved.note]);
     await recordJobEvent(c, actor, job.id, 'created', { to: 'pending_funds',
       note: `${priorityLabel(input.priority)} · estimated ${formatNzd(estimateTotal)} incl. GST${resolved.note ? ` · ${resolved.note}` : ''}` });
+    // A P1 clock runs from the moment of booking, so any delay before release counts against the target.
+    if (input.priority === 'emergency') await recordSlaStart(c, actor, job);
 
     let funding: FundingCheck | null = null;
-    const needsApproval = estimateTotal > customer.authority_limit_cents && !canApproveCharge(actor, estimateTotal, customer);
-    if (estimateTotal > customer.authority_limit_cents && !needsApproval) {
+    const overAuthority = estimateTotal > customer.authority_limit_cents;
+    const needsApproval = overAuthority && !canApproveCharge(actor, estimateTotal, customer);
+    if (overAuthority && !needsApproval) {
       await c.query('UPDATE jobs SET customer_approved_by = $2, customer_approved_at = now() WHERE id = $1', [job.id, actor.id]);
     }
-    if (needsApproval) {
+    if (needsApproval && input.priority === 'emergency') {
+      // Nothing holds a P1: it is dispatched now and an authorised approver is asked to ratify the estimate.
+      await recordJobEvent(c, actor, job.id, 'approval.retrospective', {
+        note: `Emergency dispatched without waiting for approval: estimate ${formatNzd(estimateTotal)} exceeds the authority limit of ${formatNzd(customer.authority_limit_cents)}`,
+      });
+      await notifyCustomer(c, input.customerId, {
+        template: 'job_emergency_over_limit', subject: `Emergency dispatched above your authority limit: ${job.ref}`,
+        body: `Emergency job ${job.ref} (${job.title}) has an estimated charge of ${formatNzd(estimateTotal)}, above your authority limit of ` +
+          `${formatNzd(customer.authority_limit_cents)}. Emergencies are dispatched immediately; please review the job and contact us if you have concerns.\n${link(`/app/jobs/${job.id}`)}`,
+        idempotencyKey: `emergency-over-limit:${job.id}`,
+      });
+      funding = await releaseForDispatchIfFunded(c, actor, job, settings);
+    } else if (needsApproval) {
       await transitionJob(c, actor, job, 'awaiting_customer_approval', {
         note: `Estimate ${formatNzd(estimateTotal)} exceeds the authority limit of ${formatNzd(customer.authority_limit_cents)}`,
       });
@@ -212,6 +228,31 @@ export async function createBooking(db: Db, actor: Actor, rawInput: BookingInput
   if (result.created && result.job.status === 'dispatch') await autoDispatch(db, result.job.id);
   const job = await one(db, 'SELECT * FROM jobs WHERE id = $1', [result.job.id]);
   return { ...result, job };
+}
+
+async function recordSlaStart(c: Db, actor: Actor, job: any) {
+  const sla = await startSlaClock(c, job);
+  if (!sla) return;
+  const from = job.priority === 'emergency' ? 'from booking' : 'from release';
+  await recordJobEvent(c, actor, job.id, 'sla.started', {
+    note: `${priorityLabel(job.priority)} clock ${from}: ${sla.onsiteLabel} (due ${sla.onsiteDue.toISOString()}); ${sla.resolveLabel} (due ${sla.resolveDue.toISOString()})`,
+  });
+}
+
+/**
+ * Staff reclassification. Raising a held job (awaiting funds or approval) to P1 releases it immediately, because
+ * nothing holds an emergency.
+ */
+export async function reclassifyJob(db: Db, actor: Actor, jobId: string, priority: Priority, reason: string) {
+  await reclassifyPriority(db, actor, jobId, priority, reason);
+  if (priority !== 'emergency') return;
+  const status = await tx(db, async (c) => {
+    const job = await lockJob(c, jobId);
+    if (!['pending_funds', 'awaiting_customer_approval'].includes(job.status)) return job.status;
+    await releaseForDispatchIfFunded(c, actor, job, await getSettings(c));
+    return (await one(c, 'SELECT status FROM jobs WHERE id = $1', [jobId])).status;
+  });
+  if (status === 'dispatch') await autoDispatch(db, jobId);
 }
 
 async function autoDispatch(db: Db, jobId: string) {
@@ -240,10 +281,13 @@ async function releaseForDispatchIfFunded(c: Db, actor: Actor, job: any, setting
   await c.query(`INSERT INTO job_commitments (customer_id, job_id, amount_cents) VALUES ($1,$2,$3)`, [job.customer_id, job.id, job.estimate_total_cents]);
   const note = exception ? `Released under funding exception ${exception.id}`
     : funding.emergencyOverride ? `EMERGENCY released despite: ${funding.reasons.join('; ')}` : 'Funding check passed';
-  await transitionJob(c, actor, job, 'dispatch', { note, set: exception ? { funding_exception_id: { value: exception.id } } : {} });
-  // The SLA clock starts when the job is accepted for dispatch.
-  const sla = await startSlaClock(c, job);
-  await recordJobEvent(c, actor, job.id, 'sla.started', { note: `${priorityLabel(job.priority)}: ${sla.onsiteLabel} (due ${sla.onsiteDue.toISOString()}); ${sla.resolveLabel} (due ${sla.resolveDue.toISOString()})` });
+  await transitionJob(c, actor, job, 'dispatch', { note, set: {
+    released_at: { sql: 'COALESCE(released_at, now())' },
+    ...(exception ? { funding_exception_id: { value: exception.id } } : {}),
+  } });
+  // P2–P4 clocks start at release; a P1 clock has been running since booking.
+  const released = await one(c, 'SELECT * FROM jobs WHERE id = $1', [job.id]);
+  if (job.priority !== 'emergency' || !released.sla_started_at) await recordSlaStart(c, actor, released);
   if (funding.emergencyOverride) {
     await notifyStaff(c, ['finance', 'admin'], {
       template: 'emergency_underfunded', subject: `Emergency job ${job.ref} dispatched with insufficient funds`,
@@ -398,7 +442,7 @@ export async function autoCloseJobs(db: Db): Promise<number> {
 /** Jobs visible to the actor (data isolation is enforced here, not in the views). */
 export async function getJobForActor(db: Db, actor: Actor, jobId: string) {
   const job = await maybeOne(db,
-    `SELECT j.*, s.name AS site_name, s.address AS site_address, s.region AS site_region, s.is_metro AS site_is_metro, s.hazards AS site_hazards, s.lat AS site_lat, s.lng AS site_lng,
+    `SELECT j.*, s.name AS site_name, s.address AS site_address, s.region AS site_region, s.suburb AS site_suburb, s.city AS site_city, s.sla_area_override AS site_sla_area_override, s.hazards AS site_hazards, s.lat AS site_lat, s.lng AS site_lng,
             t.name AS trade_name, t.code AS trade_code, t.before_photo_required, c.name AS customer_name, c.acknowledgement_required,
             f.name AS facility_name, u.label AS unit_label, k.legal_name AS contractor_legal_name, k.trading_name AS contractor_trading_name
        FROM jobs j JOIN sites s ON s.id = j.site_id JOIN trades t ON t.id = j.trade_id JOIN customers c ON c.id = j.customer_id

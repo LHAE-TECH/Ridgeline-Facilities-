@@ -57,14 +57,14 @@ export async function facilityTypeId(code: string): Promise<number> {
 export interface CustomerFixture { customerId: string; owner: Actor; siteId: string }
 
 /** Registers a customer with one site and the given facilities (no assessment yet). */
-export async function newCustomer(opts: { category?: string; facilities?: { type: string; units: number }[]; region?: string; siteLat?: number; siteLng?: number } = {}): Promise<CustomerFixture> {
+export async function newCustomer(opts: { category?: string; facilities?: { type: string; units: number }[]; region?: string; suburb?: string; siteLat?: number; siteLng?: number } = {}): Promise<CustomerFixture> {
   const email = `owner-${uniq()}@customer.test`;
   const { customer, user } = await registerCustomer(db, SYSTEM_ACTOR, {
     organisationName: `Customer ${uniq()}`, billingEmail: email, customerCategory: opts.category ?? 'residential',
     contactName: 'Olivia Owner', contactEmail: email, password: 'correct-horse-battery',
   });
   const owner: Actor = { id: user.id, role: 'customer', name: 'Olivia Owner', email, customerId: customer.id, customerRole: 'owner' };
-  const site = await addSite(db, owner, customer.id, { name: 'Main site', address: '1 Queen Street', city: 'Auckland', region: opts.region ?? 'Auckland',
+  const site = await addSite(db, owner, customer.id, { name: 'Main site', address: '1 Queen Street', suburb: opts.suburb ?? 'Auckland Central', city: 'Auckland', region: opts.region ?? 'Auckland',
     lat: opts.siteLat ?? null, lng: opts.siteLng ?? null });
   for (const f of opts.facilities ?? [{ type: 'res_studio_1bed', units: 10 }]) {
     await addFacility(db, owner, customer.id, { siteId: site.id, facilityTypeId: await facilityTypeId(f.type), name: `${f.units} x ${f.type}`, unitCount: f.units });

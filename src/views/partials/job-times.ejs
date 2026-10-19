@@ -1,0 +1,3 @@
+<% const holdMin = job.released_at ? Math.max(0, Math.round((new Date(job.released_at) - new Date(job.created_at)) / 60000)) : null; %>
+<p class="field-hint">Booked <%= dt(job.created_at) %> · <% if (job.released_at) { %>released to dispatch <%= dt(job.released_at) %><% if (holdMin > 0) { %> <strong>(<%= holdMin >= 120 ? (holdMin / 60).toFixed(1) + ' h' : holdMin + ' min' %> after booking)</strong><% } %><% } else { %><strong>not yet released to dispatch</strong><% } %>
+<% if (job.sla_started_at) { %> · SLA clock from <%= job.priority === 'emergency' ? 'booking' : 'release' %> (<%= dt(job.sla_started_at) %>)<% } %></p>

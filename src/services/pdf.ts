@@ -256,7 +256,7 @@ export async function monthlyReportPdf(db: Db, customerId: string, month: string
   const c = await one(db, 'SELECT * FROM customers WHERE id = $1', [customerId]);
   const sla = await slaPerformance(db, { from, to }, customerId);
   const jobs = await query(db,
-    `SELECT j.ref, j.title, j.priority, j.status, j.sla_onsite_met, j.sla_resolve_met, s.name AS site_name,
+    `SELECT j.ref, j.title, j.priority, j.status, j.sla_onsite_met, j.sla_resolve_met, j.created_at, j.released_at, s.name AS site_name,
             (SELECT total_cents FROM customer_invoices ci WHERE ci.job_id = j.id AND ci.status NOT IN ('draft','void')) AS invoiced
        FROM jobs j JOIN sites s ON s.id = j.site_id
       WHERE j.customer_id = $1 AND (j.created_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $2 AND $3 ORDER BY j.created_at`, [customerId, from, to]);
@@ -273,18 +273,20 @@ export async function monthlyReportPdf(db: Db, customerId: string, month: string
     doc.font('Helvetica-Bold').text(`${c.legal_name || c.name} · ${monthLabel}`);
     doc.font('Helvetica').text(`Account ${c.account_ref}`);
     doc.moveDown().font('Helvetica-Bold').text('Service levels');
-    table(doc, [{ label: 'Priority', width: 120 }, { label: 'Jobs', width: 50, align: 'right' }, { label: 'On site in target', width: 110, align: 'right' },
-      { label: 'Resolved in target', width: 115, align: 'right' }, { label: 'Avg time to site', width: 100, align: 'right' }],
+    const hm = (m: number | null) => m === null ? '—' : `${Math.floor(m / 60)}h ${m % 60}m`;
+    table(doc, [{ label: 'Priority', width: 100 }, { label: 'Jobs', width: 40, align: 'right' }, { label: 'On site in target', width: 95, align: 'right' },
+      { label: 'Resolved in target', width: 100, align: 'right' }, { label: 'Avg time to site', width: 80, align: 'right' }, { label: 'Avg booked to released', width: 85, align: 'right' }],
       sla.map((r) => [`${r.code} ${r.label}`, String(r.jobs), r.onsitePct === null ? '—' : `${r.onsiteMet}/${r.onsiteMeasured} (${r.onsitePct}%)`,
-        r.resolvePct === null ? '—' : `${r.resolveMet}/${r.resolveMeasured} (${r.resolvePct}%)`,
-        r.avgMinutesToSite === null ? '—' : `${Math.floor(r.avgMinutesToSite / 60)}h ${r.avgMinutesToSite % 60}m`]));
-    doc.fontSize(8).fillColor('#555').text('Targets are measured from when a job is accepted for dispatch. P2/P3 targets count NZ business hours; P1 targets run 24/7. Jobs still open are measured once their target passes or the visit occurs.').fillColor('#000').fontSize(10);
+        r.resolvePct === null ? '—' : `${r.resolveMet}/${r.resolveMeasured} (${r.resolvePct}%)`, hm(r.avgMinutesToSite), hm(r.avgMinutesBookedToReleased)]));
+    doc.fontSize(8).fillColor('#555').text('P1 targets are measured from booking and run 24/7. P2–P4 targets are measured from release to dispatch; P2/P3 count NZ business hours. ' +
+      'Any time between booking and release (for example awaiting a top-up or approval) is shown for every job below. Jobs still open are measured once their target passes or the visit occurs.').fillColor('#000').fontSize(10);
     doc.moveDown().font('Helvetica-Bold').text('Prepaid account');
     totals(doc, [['Top-ups received', formatNzd(money.topups)], ['Maintenance charges', formatNzd(money.charges)], ['Refunds, credits & adjustments', formatNzd(money.other)],
       ['Balance at month end', formatNzd(closing?.balance_after_cents ?? 0), true]]);
     doc.moveDown().font('Helvetica-Bold').text(`Jobs booked (${jobs.length})`);
-    table(doc, [{ label: 'Job', width: 75 }, { label: 'Site / description', width: 190 }, { label: 'Priority', width: 75 }, { label: 'SLA', width: 70 }, { label: 'Invoiced', width: 85, align: 'right' }],
-      jobs.map((j) => [j.ref, `${j.site_name}: ${j.title}`, priorityLabel(j.priority),
+    table(doc, [{ label: 'Job', width: 70 }, { label: 'Site / description', width: 125 }, { label: 'Priority', width: 55 }, { label: 'Booked', width: 70 },
+      { label: 'Released', width: 70 }, { label: 'SLA', width: 45 }, { label: 'Invoiced', width: 65, align: 'right' }],
+      jobs.map((j) => [j.ref, `${j.site_name}: ${j.title}`, priorityLabel(j.priority), fmtDateTime(j.created_at), j.released_at ? fmtDateTime(j.released_at) : 'Not released',
         j.sla_onsite_met === null ? (j.status === 'cancelled' ? 'Cancelled' : 'Open') : j.sla_onsite_met && j.sla_resolve_met !== false ? 'Met' : 'Missed',
         j.invoiced ? formatNzd(j.invoiced) : '—']));
     footer(doc, s.company);

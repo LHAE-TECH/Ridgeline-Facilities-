@@ -7,12 +7,12 @@ import { acceptAssessment, latestAssessment, runAssessment } from '../services/a
 import { approveContractorInvoice, getContractorInvoiceForActor, rejectContractorInvoice, validateContractorInvoice } from '../services/contractorInvoices.js';
 import { contractorProfile, createContractor, DOCUMENT_TYPES, reviewComplianceDocument, setContractorTrade, setRateCard, updateContractor, addComplianceDocument } from '../services/contractors.js';
 import { applyPrepaidToInvoice, createCreditNote, getCustomerInvoiceForActor, issueCustomerInvoice, outstandingCents, recalculateDraft } from '../services/customerInvoices.js';
-import { CUSTOMER_CATEGORIES, hashPassword, NZ_REGIONS, portfolio, SERVICE_LEVELS, setSiteMetro, updateCustomerTerms } from '../services/customers.js';
+import { CUSTOMER_CATEGORIES, hashPassword, NZ_REGIONS, portfolio, SERVICE_LEVELS, setSiteArea, updateCustomerTerms } from '../services/customers.js';
 import { assessContractorsForJob, dispatchJob, manualAssign, rankForSla, unassign } from '../services/dispatch.js';
-import { PRIORITY_META, reclassifyPriority, slaLegState, TRIAGE_QUESTIONS } from '../services/sla.js';
+import { areaForSite, PRIORITY_META, slaLegState, TRIAGE_QUESTIONS } from '../services/sla.js';
 import { raiseDispute, resolveDispute, setDisputeInvestigating } from '../services/disputes.js';
 import { reviewEvidence, reviewQuote, withdrawEvidence } from '../services/evidence.js';
-import { cancelJob, closeChecks, closeJob, getJobForActor, grantFundingException } from '../services/jobs.js';
+import { cancelJob, closeChecks, closeJob, getJobForActor, grantFundingException, reclassifyJob } from '../services/jobs.js';
 import { JOB_STATUS_LABELS } from '../services/jobState.js';
 import { accountBalances, accountPosition, reconcileCustomerBalance } from '../services/ledger.js';
 import { approveForPayment, confirmContractorPayment, createPaymentBatch, decideAdjustment, exportBatchCsv, failContractorPayment, holdPayable,
@@ -73,7 +73,9 @@ adminRouter.get('/customers/:id', async (req, res) => {
     maybeOne(pool, `SELECT * FROM auto_topup_consents WHERE customer_id = $1 AND revoked_at IS NULL`, [customer.id]),
   ]);
   const card = await maybeOne(pool, `SELECT * FROM customer_payment_methods WHERE customer_id = $1 AND status = 'active'`, [customer.id]);
-  res.render('admin/customer', { customer, ...data, position, assessment, txns, payments, jobs, users, invoices, recon, refunds, consent, card,
+  const slaAreas = (await getSettings(pool)).sla_areas;
+  const siteAreas = Object.fromEntries(data.sites.map((s: any) => [s.id, areaForSite(s, slaAreas)]));
+  res.render('admin/customer', { customer, ...data, siteAreas, slaAreas, position, assessment, txns, payments, jobs, users, invoices, recon, refunds, consent, card,
     categories: CUSTOMER_CATEGORIES, levels: SERVICE_LEVELS, key: newKey(), outstandingCents });
 });
 
@@ -83,6 +85,7 @@ adminRouter.post('/customers/:id/terms', action(async (req) => {
     authorityLimitCents: optDollars(req.body.authority_limit, 'Authority limit'), paymentTermsDays: optInt(req.body.payment_terms_days, 'Payment terms'),
     poRequired: bool(req.body.po_required), acknowledgementRequired: bool(req.body.acknowledgement_required), cancellationFeesApply: bool(req.body.cancellation_fees_apply),
     autoApplyPrepaid: bool(req.body.auto_apply_prepaid), status: (optStr(req.body.status) as any) ?? undefined,
+    monthlyReportEnabled: actor(req).role === 'admin' ? bool(req.body.monthly_report_enabled) : undefined,
   });
   return { redirect: `/admin/customers/${pid(req)}`, message: 'Account terms updated' };
 }));
@@ -171,8 +174,9 @@ adminRouter.get('/jobs/:id', async (req, res) => {
     onsite: slaLegState(job.sla_onsite_due, job.sla_started_at, job.arrived_at, settings.sla_at_risk_bps),
     resolve: slaLegState(job.sla_resolve_due, job.sla_started_at, job.made_safe_at ?? job.completed_at, settings.sla_at_risk_bps),
   };
+  const area = areaForSite({ suburb: job.site_suburb, city: job.site_city, sla_area_override: job.site_sla_area_override }, settings.sla_areas);
   res.render('admin/job', { job, events, offers, evidence, reports, quotes, contractorInvoices, customerInvoice, disputes, candidates, ranked, checks, commitment, auditRows,
-    sla, priorityMeta: PRIORITY_META, triageQuestions: TRIAGE_QUESTIONS });
+    sla, area, areas: settings.sla_areas, priorityMeta: PRIORITY_META, triageQuestions: TRIAGE_QUESTIONS });
 });
 
 adminRouter.post('/jobs/:id/dispatch', action(async (req) => {
@@ -180,12 +184,13 @@ adminRouter.post('/jobs/:id/dispatch', action(async (req) => {
   return { redirect: `/admin/jobs/${pid(req)}`, message: r.offered ? `Wave ${r.wave}: ${r.offered} offer(s) sent (${r.eligible} eligible contractor(s))` : `No further eligible contractors to offer (${r.eligible} eligible in total)` };
 }));
 adminRouter.post('/jobs/:id/priority', action(async (req) => {
-  await reclassifyPriority(pool, actor(req), pid(req), str(req.body.priority) as any, str(req.body.reason));
+  await reclassifyJob(pool, actor(req), pid(req), str(req.body.priority) as any, str(req.body.reason));
   return { redirect: `/admin/jobs/${pid(req)}`, message: 'Priority reclassified and SLA targets recalculated' };
 }));
-adminRouter.post('/sites/:id/metro', action(async (req) => {
-  const site = await setSiteMetro(pool, actor(req), pid(req), bool(req.body.is_metro));
-  return { redirect: str(req.body.back) || `/admin/customers/${site.customer_id}`, message: `Site marked ${site.is_metro ? 'metro' : 'non-metro'} (applies to jobs released from now)` };
+adminRouter.post('/sites/:id/area', action(async (req) => {
+  const site = await setSiteArea(pool, actor(req), pid(req), optStr(req.body.area) ?? null);
+  return { redirect: str(req.body.back) || `/admin/customers/${site.customer_id}`,
+    message: site.sla_area_override ? `Site pinned to ${site.sla_area_override} (applies to SLA clocks started or recalculated from now)` : 'Site area now follows its suburb' };
 }));
 adminRouter.post('/jobs/:id/assign', action(async (req) => {
   await manualAssign(pool, actor(req), pid(req), str(req.body.contractor_id), optStr(req.body.override_reason));

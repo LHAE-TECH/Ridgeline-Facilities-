@@ -198,7 +198,7 @@ export async function deliverPending(db: Db, limit = 25): Promise<{ sent: number
       const attempts = n.attempts + 1;
       // SMS is time-critical: retry quickly, give up sooner so escalation is not delayed by a dead number.
       const maxAttempts = n.channel === 'sms' ? 4 : 6;
-      const giveUp = attempts >= maxAttempts;
+      const giveUp = attempts >= maxAttempts || (err as { permanent?: boolean }).permanent === true;
       const delayMinutes = n.channel === 'sms' ? attempts : 2 ** attempts;
       await db.query(
         `UPDATE notifications SET attempts = $2, last_error = $3, status = $4, next_attempt_at = now() + ($5 || ' minutes')::interval WHERE id = $1`,

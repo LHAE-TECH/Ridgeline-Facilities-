@@ -36,7 +36,7 @@ export async function seedDemo(db: Db) {
     contactName: 'Hana Harbourside', contactEmail: 'customer@demo.ridgeline.test', password: DEMO_PASSWORD, phone: '09 555 0100', billingAddress: '12 Quay Street, Auckland',
   });
   const owner: Actor = { id: user.id, role: 'customer', name: 'Hana', customerId: customer.id, customerRole: 'owner' };
-  const site = await addSite(db, owner, customer.id, { name: 'Harbour View Apartments', address: '88 Customs Street', city: 'Auckland', region: 'Auckland',
+  const site = await addSite(db, owner, customer.id, { name: 'Harbour View Apartments', address: '88 Customs Street', suburb: 'Auckland Central', city: 'Auckland', region: 'Auckland',
     lat: -36.8441, lng: 174.7652, accessNotes: 'Key safe at concierge desk, code from building manager' });
   await addFacility(db, owner, customer.id, { siteId: site.id, facilityTypeId: (await one(db, `SELECT id FROM facility_types WHERE code = 'res_studio_1bed'`)).id,
     name: 'Tower A – one-bedroom units', unitCount: 24, unitLabels: ['A101', 'A102', 'A103', 'A201', 'A202'] });

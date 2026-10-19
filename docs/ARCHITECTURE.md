@@ -104,10 +104,10 @@ Guarantees:
 | 15 | No duplicate financial transactions from retries/webhooks | `invoicing-payments.test.ts` › Stripe webhook processed once; journals immutable; `booking-ledger.test.ts` concurrency |
 | 16 | Refunds, variations, cancellations, disputes keep audit history | `invoicing-payments.test.ts` › criterion 16 suite; `booking-ledger.test.ts` › refunds |
 | 17 | No access to other parties' confidential records | `http-isolation.test.ts` (real HTTP sessions, CSRF, files, staff pages) |
-| — | SLA engine (round 2) | `sla.test.ts`: business-hours clock incl. holidays and DST; P1 metro/non-metro, P2, P3, P4 targets; triage; clock start; breach + SMS escalation; reclassification; dashboard and monthly report; SLA-ranked waves |
-| — | SMS dispatch (round 2) | `sms.test.ts`: never-sent-unless-accepted; invalid numbers; signed status callbacks; P1 broadcast/confirmation/taken; 10-minute escalation |
+| — | SLA engine | `sla.test.ts`: business-hours clock incl. holidays and DST; P1 metro/non-metro, P2, P3, P4 targets; triage; P1 clock from booking, P2–P4 from release; nothing holds a P1 (funds, authority limit, reclassified held job); booked/released in the monthly report; Auckland areas by suburb, editable lists and site pins; breach + SMS escalation; reclassification; dashboard; monthly report off by default with per-customer toggle; SLA-ranked waves |
+| — | SMS dispatch | `sms.test.ts` (mocked Twilio): never-sent-unless-accepted; invalid numbers; outage retried, rejected number failed at once; signed status callbacks; P1 broadcast/confirmation/taken; 10-minute escalation. `sms-live.test.ts` (**real Twilio and handset; needs credentials and `SMS_TEST_MOBILE`; not yet run**): real delivery, delivery receipt via the webhook, failed number recorded as failed |
 | — | Saved-card auto top-ups (round 2) | `auto-topup.test.ts` (logic with a fake Stripe client) and `stripe-live.test.ts` (**real Stripe test mode, needs `STRIPE_TEST_SECRET_KEY`; not yet run**) |
 | — | Legal entity, assessment taper, demo guard (round 2) | `entity-assessment-demo.test.ts` |
 | 18 | Works on mobile and desktop | `e2e/workflow.test.ts` › full workflow through the UI on a 390 px phone and 1366 px desktop; every page checked for horizontal overflow |
 
-Run: `npm test` (109 tests; the 2 live Stripe tests are skipped unless `STRIPE_TEST_SECRET_KEY` is set).
+Run: `npm test` (119 tests; the 2 live Stripe and 2 live Twilio tests are skipped unless their credentials are set). `npm run test:live` runs the live suites.

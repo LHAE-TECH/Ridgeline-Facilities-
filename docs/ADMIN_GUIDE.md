@@ -81,12 +81,12 @@ Changing assumptions does not change agreed balances. Recalculate and re-agree a
 | **P4 Scheduled** | Agreed date / window | Agreed date | Agreed date |
 
 - **Business hours** (`sla_business_hours`) default to 08:00–17:00 Monday–Friday, excluding the public holidays in Settings. A business day is the length of that window (9 hours), so "2 business days" means 18 business hours. Daylight saving changes are handled.
-- **Metro**: a site is metro when its city or region is in `metro_cities` (main centres by default; **confirm this list**). Staff can override it per site on the job page ("Site is metro: mark non-metro"). The setting applies to jobs released after the change.
+- **Areas (Auckland only)**: `sla_areas` lists each area, whether it is metro, and its suburbs. **Metro** (P1 2 h on site / 4 h made safe): Auckland Central, North Shore, West Auckland, East Auckland, South Auckland. **Non-metro** (P1 4 h / 8 h): Rodney, Franklin. A site's area comes from its **suburb** (required when adding a site; matching ignores case and macrons). To move an edge suburb, edit the lists in **Settings → sla_areas**: no deploy needed. To place one site differently from its suburb, use **SLA area** on the job page or the customer's portfolio to pin it, or choose "Follow suburb" to clear the pin. A suburb in no list gets the stricter metro targets and an "area unconfirmed" warning until staff assign it. Changes apply to SLA clocks started or recalculated after the change.
 - **Intake classification**: the booking form asks three triage questions (safety risk / prevents normal use / planned work). A reported safety risk is always booked as **P1**, even if the booker chose lower. A booker who chooses a higher priority than the triage suggests is allowed, but the job is flagged "Review classification" for operations. Ops can **Reclassify** any open job with a reason; targets are recalculated from the original start time.
-- **The clock starts when the job is accepted for dispatch.** Jobs held for funds or customer approval have no clock until released. The job page shows both legs (on site, resolved/made safe) with time left, at-risk or breached status.
+- **When the clock starts**: **P1 at booking**, and nothing holds a P1 (see Booking rules). **P2–P4 at release to dispatch**: jobs held for funds or customer approval have no clock until released. Every job record shows **booked** and **released** times and any gap between them (job pages, the monthly report and its average booked → released column), so a hold is visible, not hidden. The job page shows both legs (on site, resolved/made safe) with time left, at-risk or breached status.
 - **P1 "made safe"**: the contractor taps *Site is made safe* with a note, which records the P1 resolution time. Completing the job also satisfies the resolution target.
 - **Alerts**: when `sla_at_risk_bps` (75%) of a window has elapsed, operations are emailed. Breaches are flagged on the job, emailed, and for P1 also sent by **SMS to the escalation phones**.
-- **Reporting**: the ops dashboard shows on-site and resolution performance per priority for the selected period, plus every open job that is at risk or breached. Customers get a **monthly report** (Reports page and PDF, emailed on the 1st for the previous month) with the same per-priority performance, their jobs and prepaid account movement.
+- **Reporting**: the ops dashboard shows on-site and resolution performance per priority for the selected period, plus every open job that is at risk or breached. Customers can get a **monthly report** (Reports page and PDF, emailed on the 1st for the previous month) with the same per-priority performance, every job's booked and released times, and prepaid account movement. **It ships OFF.** It runs only for customers where both the global setting `monthly_report_enabled` and the customer's own *Send monthly SLA & spend report* toggle (customer page → Account terms, administrators only) are on. While it is off, the customer sees no Reports page and nothing is emailed.
 
 ## SLA-ranked dispatch and escalation
 
@@ -101,9 +101,9 @@ Changing assumptions does not change agreed balances. Recalculate and re-agree a
 ## Booking rules and exceptions
 
 - **Funding check** at booking: routine and urgent jobs are held (`pending_funds`) while the prepaid balance is below the agreed minimum, or when the available balance (balance minus amounts committed to open jobs) is less than the job estimate.
-- **P1 emergency jobs** are dispatched even when funds are short (`allow_emergency_below_minimum`, on by default), and finance is notified to follow up.
+- **Nothing holds a P1.** Emergency jobs are released and dispatched immediately, even when funds are short (finance is notified to follow up) or the estimate exceeds the customer's authority limit (the customer's approvers are told it was dispatched, and the job records a retrospective-approval event). Raising a held job to P1 releases it at once, with its clock running from the original booking time.
 - **Funding exception**: on a held job, finance or admin can release it with a recorded reason.
-- **Authority limit** (per customer, incl GST): jobs whose estimate exceeds it wait for an owner or approver.
+- **Authority limit** (per customer, incl GST): P2–P4 jobs whose estimate exceeds it wait for an owner or approver.
 - The estimate is **committed** against the available balance and released on cancellation or settled when the invoice is issued.
 
 ## Dispatch

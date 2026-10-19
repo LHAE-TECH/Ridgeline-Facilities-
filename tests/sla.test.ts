@@ -3,12 +3,13 @@ import { one, query } from '../src/db.js';
 import { addBusinessMinutes, businessMinutesBetween } from '../src/services/businessTime.js';
 import { acceptOffer, advanceDispatchWaves, rankForSla } from '../src/services/dispatch.js';
 import { addEvidence, completeJob, markMadeSafe, recordArrival, startWork } from '../src/services/evidence.js';
-import { resolvePriority } from '../src/services/jobs.js';
+import { reclassifyJob, resolvePriority } from '../src/services/jobs.js';
+import { addCustomerUser, setSiteArea, updateCustomerTerms } from '../src/services/customers.js';
 import { sendMonthlyReports } from '../src/services/monthlyReport.js';
 import { monthlyReportPdf } from '../src/services/pdf.js';
 import { dashboard } from '../src/services/reports.js';
 import { SETTING_DEFAULTS, updateSetting } from '../src/services/settings.js';
-import { checkSlaBreaches, classifyPriority, computeSlaTargets, reclassifyPriority, slaPerformance } from '../src/services/sla.js';
+import { areaForSite, checkSlaBreaches, classifyPriority, computeSlaTargets, reclassifyPriority, slaPerformance } from '../src/services/sla.js';
 import { activeCustomer, approvedContractor, book, count, db, pdfText, photo, resetDb, staff } from './helpers.js';
 
 beforeEach(resetDb);
@@ -78,20 +79,126 @@ describe('intake classification', () => {
     expect(resolvePriority(null, { preventsUse: true }).priority).toBe('urgent');
   });
 
-  it('records triage on the job and starts the SLA clock only when released to dispatch', async () => {
+  it('records triage on the job; a P1 clock starts at booking, P2–P4 at release to dispatch', async () => {
     await approvedContractor();
     const fx = await activeCustomer();
     const { job } = await book(fx, { priority: null, triage: { safetyRisk: true }, preferredStart: null });
     expect(job.priority).toBe('emergency');
     expect(job.suggested_priority).toBe('emergency');
-    expect(job.sla_started_at).not.toBeNull();
+    expect(new Date(job.sla_started_at).toISOString()).toBe(new Date(job.created_at).toISOString());
+    expect(job.released_at).not.toBeNull();
+    expect(job.sla_targets.clock_from).toBe('booking');
     expect(new Date(job.sla_onsite_due).getTime() - new Date(job.sla_started_at).getTime()).toBe(2 * 3600000);
-    expect(job.sla_targets.metro).toBe(true); // Auckland site
+    expect(job.sla_targets).toMatchObject({ metro: true, area: 'Auckland Central', area_confirmed: true });
 
     await db.query('UPDATE customers SET prepaid_balance_cents = 0 WHERE id = $1', [fx.customerId]);
     const held = (await book(fx, { triage: {}, priority: null, title: 'Held job' })).job;
     expect(held.status).toBe('pending_funds');
     expect(held.sla_started_at).toBeNull();
+    expect(held.released_at).toBeNull();
+  });
+});
+
+describe('nothing holds a P1', () => {
+  it('dispatches a P1 at once with no funds and above the authority limit, clock from booking, approver told', async () => {
+    await approvedContractor();
+    const fx = await activeCustomer();
+    await db.query('UPDATE customers SET authority_limit_cents = 1000 WHERE id = $1', [fx.customerId]);
+    await db.query('UPDATE customers SET prepaid_balance_cents = 0 WHERE id = $1', [fx.customerId]);
+    const booker = await addCustomerUser(db, fx.owner, fx.customerId, { name: 'Bob Booker', email: 'p1-booker@customer.test', password: 'correct-horse-battery', customerRole: 'booker' });
+    const bookerActor = { id: booker.id, role: 'customer' as const, name: 'Bob', customerId: fx.customerId, customerRole: 'booker' as const };
+    const { job } = await book({ ...fx, owner: bookerActor }, { priority: 'emergency', preferredStart: null });
+    expect(['dispatch', 'offered']).toContain(job.status);
+    expect(new Date(job.sla_started_at).toISOString()).toBe(new Date(job.created_at).toISOString());
+    expect(await count(`SELECT COUNT(*) AS n FROM job_events WHERE job_id = $1 AND event_type = 'approval.retrospective'`, [job.id])).toBe(1);
+    expect(await count(`SELECT COUNT(*) AS n FROM notifications WHERE template = 'job_emergency_over_limit'`)).toBeGreaterThan(0);
+    expect(await count(`SELECT COUNT(*) AS n FROM notifications WHERE template = 'emergency_underfunded'`)).toBeGreaterThan(0);
+  });
+
+  it('releasing a held job raised to P1 runs the clock from the original booking time', async () => {
+    await approvedContractor();
+    const fx = await activeCustomer();
+    await db.query('UPDATE customers SET prepaid_balance_cents = 0 WHERE id = $1', [fx.customerId]);
+    const held = (await book(fx, { priority: 'standard' })).job;
+    expect(held.status).toBe('pending_funds');
+    await db.query(`UPDATE jobs SET created_at = now() - interval '30 minutes' WHERE id = $1`, [held.id]);
+    await reclassifyJob(db, await staff('ops'), held.id, 'emergency', 'Caller reports water through ceiling lights');
+    const j = await one(db, 'SELECT * FROM jobs WHERE id = $1', [held.id]);
+    expect(['dispatch', 'offered']).toContain(j.status);
+    expect(new Date(j.sla_started_at).toISOString()).toBe(new Date(j.created_at).toISOString());
+    expect(new Date(j.released_at).getTime()).toBeGreaterThan(new Date(j.created_at).getTime() + 29 * 60000);
+    // On-site due 2 h from booking, so the 30 minutes held already count against it.
+    expect(new Date(j.sla_onsite_due).getTime() - new Date(j.created_at).getTime()).toBe(2 * 3600000);
+  });
+
+  it('P2–P4 clocks start at release; booked and released times both appear in the monthly report', async () => {
+    await approvedContractor();
+    const fx = await activeCustomer();
+    const deposit = await one(db, 'SELECT prepaid_balance_cents FROM customers WHERE id = $1', [fx.customerId]);
+    await db.query('UPDATE customers SET prepaid_balance_cents = 0 WHERE id = $1', [fx.customerId]);
+    const held = (await book(fx, { priority: 'urgent', preferredStart: null })).job;
+    expect(held.sla_started_at).toBeNull();
+    await db.query(`UPDATE jobs SET created_at = now() - interval '3 hours' WHERE id = $1`, [held.id]);
+    await db.query('UPDATE customers SET prepaid_balance_cents = $2 WHERE id = $1', [fx.customerId, deposit.prepaid_balance_cents]);
+    const { recheckPendingFunding } = await import('../src/services/jobs.js');
+    expect(await recheckPendingFunding(db, fx.customerId)).toEqual([held.id]);
+    const j = await one(db, 'SELECT * FROM jobs WHERE id = $1', [held.id]);
+    expect(new Date(j.sla_started_at).toISOString()).toBe(new Date(j.released_at).toISOString());
+    expect(j.sla_targets.clock_from).toBe('release');
+    const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland' }).format(new Date(j.created_at)).slice(0, 7);
+    const text = pdfText(await monthlyReportPdf(db, fx.customerId, month));
+    expect(text).toMatch(/Booked/);
+    expect(text).toMatch(/Released/);
+    expect(text).toMatch(/Avg booked to released/);
+    const perf = await slaPerformance(db, { from: `${month}-01`, to: `${month}-31` }, fx.customerId);
+    expect(perf.find((p) => p.code === 'P2')!.avgMinutesBookedToReleased).toBeGreaterThanOrEqual(179);
+  });
+});
+
+describe('Auckland SLA areas', () => {
+  const areas = SETTING_DEFAULTS.sla_areas;
+  it('maps suburbs to the five metro areas and the two non-metro areas', () => {
+    expect(areaForSite({ suburb: 'Takapuna' }, areas)).toMatchObject({ metro: true, source: 'suburb', area: { name: 'North Shore' } });
+    expect(areaForSite({ suburb: 'mt  eden'.replace('mt', 'Mount') }, areas)).toMatchObject({ metro: true, area: { name: 'Auckland Central' } });
+    expect(areaForSite({ suburb: 'Manurewa' }, areas).area!.name).toBe('South Auckland');
+    expect(areaForSite({ suburb: 'Henderson' }, areas).area!.name).toBe('West Auckland');
+    expect(areaForSite({ suburb: 'Howick' }, areas).area!.name).toBe('East Auckland');
+    expect(areaForSite({ suburb: 'Warkworth' }, areas)).toMatchObject({ metro: false, area: { name: 'Rodney' } });
+    expect(areaForSite({ suburb: 'Pukekohe' }, areas)).toMatchObject({ metro: false, area: { name: 'Franklin' } });
+    // Unknown suburb: metro (stricter) target applied and flagged unconfirmed for staff.
+    expect(areaForSite({ suburb: 'Nowhere Flats' }, areas)).toMatchObject({ metro: true, source: 'unconfirmed', area: null });
+    // A staff pin wins over the suburb.
+    expect(areaForSite({ suburb: 'Takapuna', sla_area_override: 'Rodney' }, areas)).toMatchObject({ metro: false, source: 'override' });
+  });
+
+  it('applies the non-metro P1 targets (4 h on site / 8 h made safe) in Rodney and Franklin', async () => {
+    await approvedContractor();
+    const fx = await activeCustomer();
+    await db.query(`UPDATE sites SET suburb = 'Warkworth' WHERE id = $1`, [fx.siteId]);
+    const { job } = await book(fx, { priority: 'emergency', preferredStart: null });
+    expect(job.sla_targets).toMatchObject({ area: 'Rodney', metro: false });
+    expect(new Date(job.sla_onsite_due).getTime() - new Date(job.sla_started_at).getTime()).toBe(4 * 3600000);
+    expect(new Date(job.sla_resolve_due).getTime() - new Date(job.sla_started_at).getTime()).toBe(8 * 3600000);
+  });
+
+  it('moves an edge suburb between areas through settings or a site pin, without a deploy', async () => {
+    await approvedContractor();
+    const fx = await activeCustomer();
+    const admin = await staff('admin');
+    await db.query(`UPDATE sites SET suburb = 'Albany' WHERE id = $1`, [fx.siteId]);
+    const moved = SETTING_DEFAULTS.sla_areas.map((a) => ({ ...a, suburbs: a.name === 'North Shore' ? a.suburbs.filter((x) => x !== 'Albany')
+      : a.name === 'Rodney' ? [...a.suburbs, 'Albany'] : a.suburbs }));
+    await updateSetting(db, admin, 'sla_areas', moved);
+    const a = (await book(fx, { priority: 'emergency', preferredStart: null })).job;
+    expect(a.sla_targets).toMatchObject({ area: 'Rodney', metro: false });
+
+    await setSiteArea(db, await staff('ops'), fx.siteId, 'North Shore');
+    const b = (await book(fx, { priority: 'emergency', preferredStart: null, title: 'Second' })).job;
+    expect(b.sla_targets).toMatchObject({ area: 'North Shore', metro: true });
+    await expect(setSiteArea(db, await staff('ops'), fx.siteId, 'Hamilton')).rejects.toThrow(/Unknown SLA area/);
+    // A malformed or contradictory edit is refused rather than breaking every P1 target.
+    await expect(updateSetting(db, admin, 'sla_areas', [{ name: 'Rodney', suburbs: ['Albany'] }])).rejects.toThrow(/metro/);
+    await expect(updateSetting(db, admin, 'sla_areas', [...moved, { name: 'Extra', metro: true, suburbs: ['Albany'] }])).rejects.toThrow(/both/);
   });
 });
 
@@ -170,8 +277,16 @@ describe('SLA tracking, breaches and reclassification', () => {
     expect(text).toMatch(/1\/1 \(100%\)/);
     expect(text).toMatch(/LHA Holdings Limited/);
 
-    // Emailed once per customer for the previous month.
+    // Ships OFF: nothing is emailed until both the global switch and the customer's own toggle are on.
     const nextMonth = new Date(); nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1, 2);
+    const admin = await staff('admin');
+    expect(SETTING_DEFAULTS.monthly_report_enabled).toBe(false);
+    expect(await sendMonthlyReports(db, nextMonth)).toBe(0);
+    await updateSetting(db, admin, 'monthly_report_enabled', true);
+    expect(await sendMonthlyReports(db, nextMonth)).toBe(0);
+    await expect(updateCustomerTerms(db, await staff('ops'), fx.customerId, { monthlyReportEnabled: true })).rejects.toThrow(/administrator/);
+    await updateCustomerTerms(db, admin, fx.customerId, { monthlyReportEnabled: true });
+    // Emailed once per customer for the previous month.
     expect(await sendMonthlyReports(db, nextMonth)).toBe(1);
     expect(await sendMonthlyReports(db, nextMonth)).toBe(0);
   });

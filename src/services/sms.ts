@@ -7,6 +7,12 @@ import { config } from '../config.js';
  */
 
 export interface SmsMessage { to: string; body: string }
+
+/** Twilio refused the message outright (e.g. invalid or non-mobile number). Retrying cannot succeed. */
+export class SmsRejectedError extends Error {
+  readonly permanent = true;
+  constructor(message: string, readonly code: number | null) { super(message); }
+}
 export interface SmsResult { messageId: string; status: string }
 export type SmsTransport = (msg: SmsMessage) => Promise<SmsResult>;
 
@@ -38,7 +44,13 @@ export function resolveSmsTransport(): SmsTransport | null {
       body: params,
     });
     const json = (await res.json().catch(() => ({}))) as { sid?: string; status?: string; message?: string; code?: number };
-    if (!res.ok || !json.sid) throw new Error(`Twilio rejected SMS (${res.status}${json.code ? ` code ${json.code}` : ''}): ${json.message ?? 'no message SID returned'}`);
+    if (!res.ok || !json.sid) {
+      const msg = `Twilio rejected SMS (${res.status}${json.code ? ` code ${json.code}` : ''}): ${json.message ?? 'no message SID returned'}`;
+      // A 400 is a request Twilio will never accept (bad number, unsubscribed, unverified on a trial account); auth,
+      // rate-limit and server errors stay retryable.
+      if (res.status === 400) throw new SmsRejectedError(msg, json.code ?? null);
+      throw new Error(msg);
+    }
     return { messageId: json.sid, status: json.status ?? 'queued' };
   };
 }

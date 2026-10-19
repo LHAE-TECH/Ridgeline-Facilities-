@@ -10,6 +10,8 @@ A production-ready operating system for **Ridgeline Facilities** (ridgelinefacil
 | [docs/COSTS.md](docs/COSTS.md) | Itemised recurring costs |
 | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Live / test / unconfigured integrations and how to enable them |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Data model, ledger design, security and acceptance-test map |
+| [docs/LEGAL_REVIEW_BRIEF.md](docs/LEGAL_REVIEW_BRIEF.md) | Specific questions for the lawyer reviewing the agreements |
+| [docs/GST_TIMING.md](docs/GST_TIMING.md) | GST on prepaid top-ups: current assumption, open questions, what changes if it is wrong |
 
 ## What it does
 
@@ -28,7 +30,7 @@ A production-ready operating system for **Ridgeline Facilities** (ridgelinefacil
 13. Contractor payables move through payment approval, adjustments (only with approval; deductions need the contractor's agreement), a batch with bank CSV export, and **confirmation with a bank reference and date**. Only then is anything marked paid. Bank statement CSVs can be reconciled automatically.
 14. The job closes only when evidence is approved, the contractor invoice is approved, the customer invoice is settled, the contractor payment is confirmed and no dispute is open.
 
-**Service levels.** Jobs are classified at intake into the published matrix (P1 Emergency: 2 h on site in metro areas, made safe in 4 h, 24/7, with configurable non-metro targets; P2 Urgent: 8 business hrs / 2 business days; P3 Standard: 48 business hrs / 10 business days; P4 Scheduled: agreed date). Each job runs an SLA clock against NZ business hours and holidays, with breach flagging. Dispatch offers jobs in waves ranked by SLA risk, with SMS offers, acceptance confirmations and escalation to on-call staff phones when nobody accepts (10 minutes for P1). SLA performance appears on the ops dashboard and in each customer's monthly report.
+**Service levels.** Jobs are classified at intake into the published matrix (P1 Emergency: 2 h on site in metro Auckland, made safe in 4 h, 24/7, with 4 h / 8 h in Rodney and Franklin, clock from booking; P2 Urgent: 8 business hrs / 2 business days; P3 Standard: 48 business hrs / 10 business days; P4 Scheduled: agreed date). Each job runs an SLA clock against NZ business hours and holidays, with breach flagging. Dispatch offers jobs in waves ranked by SLA risk, with SMS offers, acceptance confirmations and escalation to on-call staff phones when nobody accepts (10 minutes for P1). SLA performance appears on the ops dashboard and in an optional monthly customer report (off by default, enabled per customer).
 
 **Automatic top-ups** charge a saved card off-session (Stripe) with explicit consent, crediting the balance only when Stripe confirms the payment.
 
@@ -65,8 +67,8 @@ Or with Docker: `docker compose up --build`, then `docker compose exec app node 
 
 ```bash
 createdb ridgeline_test
-npm test        # 109 tests: unit, service, HTTP and a Playwright end-to-end run (phone + desktop)
-STRIPE_TEST_SECRET_KEY=sk_test_... npx vitest run tests/stripe-live.test.ts   # real Stripe test mode (required before go-live)
+npm test            # 119 tests: unit, service, HTTP and a Playwright end-to-end run (phone + desktop); live suites skip
+npm run test:live   # real Stripe test mode + real Twilio SMS (required before go-live; see docs/INTEGRATIONS.md)
 ```
 
 The test suite rebuilds the `ridgeline_test` schema from the migrations on each run. Each of the 18 acceptance criteria maps to named tests; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#acceptance-criteria--tests).

@@ -1,6 +1,7 @@
 import type { Db } from '../db.js';
 import { query } from '../db.js';
 import type { Actor } from '../lib/actor.js';
+import { AppError } from '../lib/errors.js';
 import { audit } from './audit.js';
 
 /**
@@ -41,7 +42,6 @@ export const SETTING_DEFAULTS = {
   ] as { up_to_cents: number | null; coverage_bps: number }[],
   // Booking eligibility
   booking_requires_minimum_balance: true,
-  allow_emergency_below_minimum: true,
   low_balance_alert_bps: 10000,
   low_balance_reminder_days: 3,
   // Time windows
@@ -62,7 +62,30 @@ export const SETTING_DEFAULTS = {
   sla_p3_resolve_business_days: 10,
   sla_business_hours: { start: '08:00', end: '17:00', days: [1, 2, 3, 4, 5] },
   sla_at_risk_bps: 7500,
-  metro_cities: ['Auckland', 'Wellington', 'Lower Hutt', 'Upper Hutt', 'Porirua', 'Christchurch', 'Hamilton', 'Tauranga', 'Dunedin'],
+  // Auckland SLA areas. A site's area comes from its suburb (edit these lists to move edge suburbs; no deploy needed).
+  // Metro areas get the P1 metro target; non-metro areas get the non-metro P1 target. Staff can override per site.
+  sla_areas: [
+    { name: 'Auckland Central', metro: true, suburbs: ['Auckland Central', 'Auckland CBD', 'City Centre', 'Ponsonby', 'Grey Lynn', 'Herne Bay', 'Freemans Bay', "St Mary's Bay", 'St Marys Bay',
+      'Parnell', 'Newmarket', 'Grafton', 'Eden Terrace', 'Newton', 'Arch Hill', 'Kingsland', 'Mount Eden', 'Epsom', 'Remuera', 'Mount Albert', 'Sandringham', 'Westmere',
+      'Western Springs', 'Point Chevalier', 'Morningside', 'Balmoral', 'Three Kings', 'Mount Roskill', 'Ellerslie', 'Greenlane', 'One Tree Hill', 'Royal Oak', 'Onehunga',
+      'Penrose', 'Mount Wellington', 'Meadowbank', 'St Johns', 'Orakei', 'Mission Bay', 'Kohimarama', 'St Heliers', 'Glendowie', 'Panmure', 'Glen Innes', 'Point England'] },
+    { name: 'North Shore', metro: true, suburbs: ['North Shore', 'Takapuna', 'Devonport', 'Bayswater', 'Belmont', 'Hauraki', 'Milford', 'Castor Bay', 'Forrest Hill', 'Sunnynook',
+      'Northcote', 'Birkenhead', 'Birkdale', 'Beach Haven', 'Chatswood', 'Hillcrest', 'Glenfield', 'Totara Vale', 'Wairau Valley', 'Unsworth Heights', 'Rosedale', 'Albany',
+      'Pinehill', 'Greenhithe', 'Campbells Bay', 'Mairangi Bay', 'Murrays Bay', 'Rothesay Bay', 'Browns Bay', 'Torbay', 'Long Bay'] },
+    { name: 'West Auckland', metro: true, suburbs: ['West Auckland', 'Henderson', 'New Lynn', 'Glen Eden', 'Titirangi', 'Green Bay', 'Blockhouse Bay', 'Avondale', 'New Windsor',
+      'Waterview', 'Kelston', 'Sunnyvale', 'Te Atatu', 'Te Atatu Peninsula', 'Te Atatu South', 'Massey', 'Westgate', 'West Harbour', 'Hobsonville', 'Whenuapai', 'Ranui',
+      'Swanson', 'Lincoln', 'Oratia', 'Laingholm'] },
+    { name: 'East Auckland', metro: true, suburbs: ['East Auckland', 'Howick', 'Pakuranga', 'Botany', 'Botany Downs', 'Half Moon Bay', 'Bucklands Beach', 'Eastern Beach',
+      'Highland Park', 'Cockle Bay', 'Shelly Park', 'Mellons Bay', 'Farm Cove', 'Sunnyhills', 'Golflands', 'Dannemora', 'Burswood', 'East Tamaki', 'Flat Bush', 'Ormiston'] },
+    { name: 'South Auckland', metro: true, suburbs: ['South Auckland', 'Manukau', 'Papatoetoe', 'Otahuhu', 'Otara', 'Mangere', 'Mangere Bridge', 'Favona', 'Middlemore', 'Wiri',
+      'Clover Park', 'Manurewa', 'Clendon Park', 'Weymouth', 'Hillpark', 'Homai', 'Randwick Park', 'Totara Heights', 'Goodwood Heights', 'Takanini', 'Conifer Grove',
+      'Papakura', 'Red Hill', 'Rosehill'] },
+    { name: 'Rodney', metro: false, suburbs: ['Rodney', 'Orewa', 'Silverdale', 'Millwater', 'Red Beach', 'Hatfields Beach', 'Waiwera', 'Whangaparaoa', 'Stanmore Bay', 'Gulf Harbour',
+      'Dairy Flat', 'Wainui', 'Puhoi', 'Warkworth', 'Snells Beach', 'Algies Bay', 'Matakana', 'Leigh', 'Omaha', 'Wellsford', 'Helensville', 'Kumeu', 'Huapai', 'Riverhead',
+      'Waimauku', 'Muriwai'] },
+    { name: 'Franklin', metro: false, suburbs: ['Franklin', 'Pukekohe', 'Waiuku', 'Drury', 'Karaka', 'Paerata', 'Patumahoe', 'Bombay', 'Ramarama', 'Clevedon', 'Beachlands',
+      'Maraetai', 'Kawakawa Bay'] },
+  ] as { name: string; metro: boolean; suburbs: string[] }[],
   // SLA-ranked dispatch: offers go out in waves, best-placed contractors first.
   dispatch_wave_size: { emergency: 0, urgent: 3, standard: 3, scheduled: 5 } as Record<string, number>,
   dispatch_wave_minutes: { emergency: 5, urgent: 20, standard: 60, scheduled: 240 } as Record<string, number>,
@@ -76,7 +99,8 @@ export const SETTING_DEFAULTS = {
   sms_offer_priorities: ['emergency', 'urgent'],
   sms_offers_outside_business_hours: true,
   // Monthly customer report (emailed on the 1st for the previous month)
-  monthly_report_enabled: true,
+  // Master switch (off at launch). Reports are only emailed to customers who are also individually switched on.
+  monthly_report_enabled: false,
   // Saved-card automatic top-ups
   auto_topup_max_failures: 3,
   always_required_documents: ['public_liability'],
@@ -109,7 +133,6 @@ export const SETTING_DESCRIPTIONS: Partial<Record<SettingKey, string>> = {
   assessment_markup_bps: 'Markup applied to estimated contractor spend in assessments (bps)',
   emergency_cover_factor_bps: 'Multiplier on the emergency job share for each emergency cover level (bps)',
   booking_requires_minimum_balance: 'Hold P2–P4 bookings while the balance is below the agreed minimum',
-  allow_emergency_below_minimum: 'Allow emergency jobs to be dispatched when funds are short (flagged for follow-up)',
   low_balance_alert_bps: 'Alert when balance falls below this share of the agreed minimum (10000 = 100%)',
   auto_dispatch: 'Automatically offer confirmed jobs to all eligible contractors',
   offer_expiry_minutes: 'Minutes before an unanswered job offer expires, by priority',
@@ -123,7 +146,8 @@ export const SETTING_DESCRIPTIONS: Partial<Record<SettingKey, string>> = {
   sla_p3_resolve_business_days: 'P3 Standard: resolved within this many NZ business days',
   sla_business_hours: 'NZ business hours used for SLA clocks (public holidays excluded)',
   sla_at_risk_bps: 'Alert operations when this share of an SLA window has elapsed (bps)',
-  metro_cities: 'Site cities treated as metro for P1 targets (staff can override per site)',
+  sla_areas: 'Auckland SLA areas: each lists its suburbs and whether it gets the metro P1 target. Sites with an unlisted suburb are treated as metro and flagged',
+  monthly_report_enabled: 'Master switch for emailing monthly customer reports (each customer must also be switched on)',
   dispatch_wave_size: 'Contractors offered per dispatch wave, best SLA fit first (0 = all who can meet the SLA)',
   dispatch_wave_minutes: 'Minutes before the next dispatch wave is offered if nobody has accepted',
   escalation_minutes: 'Escalate to staff (SMS + email) if no contractor accepts within this many minutes',
@@ -149,7 +173,27 @@ export async function getSettings(db: Db): Promise<Settings> {
   return result as Settings;
 }
 
+/** SLA areas drive every P1 target, so a malformed edit is refused rather than stored. */
+function validateSlaAreas(value: unknown): void {
+  if (!Array.isArray(value) || value.length === 0) throw new AppError('sla_areas must be a non-empty list of areas');
+  const names = new Set<string>();
+  const owner = new Map<string, string>();
+  for (const a of value as any[]) {
+    if (!a || typeof a.name !== 'string' || !a.name.trim()) throw new AppError('Each SLA area needs a name');
+    if (typeof a.metro !== 'boolean') throw new AppError(`SLA area "${a.name}" needs "metro": true or false`);
+    if (!Array.isArray(a.suburbs) || a.suburbs.some((x: unknown) => typeof x !== 'string' || !x.trim())) throw new AppError(`SLA area "${a.name}" needs a list of suburb names`);
+    if (names.has(a.name.toLowerCase())) throw new AppError(`SLA area "${a.name}" is listed twice`);
+    names.add(a.name.toLowerCase());
+    for (const sub of a.suburbs as string[]) {
+      const k = sub.trim().toLowerCase();
+      if (owner.has(k) && owner.get(k) !== a.name) throw new AppError(`Suburb "${sub}" is in both ${owner.get(k)} and ${a.name}`);
+      owner.set(k, a.name);
+    }
+  }
+}
+
 export async function updateSetting(db: Db, actor: Actor, key: SettingKey, value: unknown): Promise<void> {
+  if (key === 'sla_areas') validateSlaAreas(value);
   const before = (await getSettings(db))[key];
   await db.query(
     `INSERT INTO settings (key, value, description, updated_by, updated_at) VALUES ($1, $2, $3, $4, now())

@@ -1,5 +1,5 @@
 import type { Db } from '../db.js';
-import { maybeOne, one, query, tx } from '../db.js';
+import { one, query, tx } from '../db.js';
 import type { Actor } from '../lib/actor.js';
 import { SYSTEM_ACTOR, isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError } from '../lib/errors.js';
@@ -108,24 +108,58 @@ export function computeSlaTargets(
   }
 }
 
-export function isMetroCity(city: string | null | undefined, metroCities: string[]): boolean {
-  if (!city) return false;
-  return metroCities.some((m) => m.trim().toLowerCase() === city.trim().toLowerCase());
+export interface SlaArea { name: string; metro: boolean; suburbs: string[] }
+
+function norm(v: string): string {
+  return v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-/** Starts (or restarts after reclassification) the SLA clock. Caller holds the job lock. */
-export async function startSlaClock(c: Db, job: any): Promise<SlaTargets> {
+export interface SiteArea { area: SlaArea | null; source: 'override' | 'suburb' | 'city' | 'unconfirmed'; metro: boolean }
+
+/**
+ * Resolves a site's SLA area: a staff override, else its suburb (or city) looked up in the sla_areas setting.
+ * An unlisted suburb is treated as METRO (the stricter, published 2-hour target) and flagged as unconfirmed, so a
+ * missing entry never silently weakens the commitment.
+ */
+export function areaForSite(site: { suburb?: string | null; city?: string | null; sla_area_override?: string | null }, areas: SlaArea[]): SiteArea {
+  const find = (name: string | null | undefined) => (name ? areas.find((a) => norm(a.name) === norm(name)) ?? null : null);
+  const bySuburb = (name: string | null | undefined) => (name ? areas.find((a) => a.suburbs.some((x) => norm(x) === norm(name))) ?? null : null);
+  const override = find(site.sla_area_override);
+  if (override) return { area: override, source: 'override', metro: override.metro };
+  const s = bySuburb(site.suburb);
+  if (s) return { area: s, source: 'suburb', metro: s.metro };
+  const c = find(site.city) ?? bySuburb(site.city);
+  if (c) return { area: c, source: 'city', metro: c.metro };
+  return { area: null, source: 'unconfirmed', metro: true };
+}
+
+export async function siteArea(db: Db, siteId: string): Promise<SiteArea> {
+  const site = await one(db, 'SELECT suburb, city, sla_area_override FROM sites WHERE id = $1', [siteId]);
+  return areaForSite(site, (await getSettings(db)).sla_areas);
+}
+
+/**
+ * Starts or recalculates the SLA clock. P1 runs from BOOKING (the moment the customer reported the emergency);
+ * P2–P4 run from release to dispatch. Returns null (and clears the targets) if the clock should not run yet.
+ */
+export async function startSlaClock(c: Db, job: any): Promise<SlaTargets | null> {
   const settings = await getSettings(c);
   const holidays = await loadHolidays(c);
-  const site = await one(c, 'SELECT is_metro FROM sites WHERE id = $1', [job.site_id]);
-  // The clock keeps its original start when targets are recalculated (e.g. after reclassification).
-  const startedAt = job.sla_started_at ? new Date(job.sla_started_at) : new Date();
-  const t = computeSlaTargets(job, site.is_metro, startedAt, settings, holidays);
+  const startedAt = job.priority === 'emergency' ? new Date(job.created_at) : job.released_at ? new Date(job.released_at) : null;
+  if (!startedAt) {
+    await c.query(`UPDATE jobs SET sla_started_at = NULL, sla_onsite_due = NULL, sla_resolve_due = NULL, sla_targets = NULL WHERE id = $1`, [job.id]);
+    return null;
+  }
+  const area = await siteArea(c, job.site_id);
+  const t = computeSlaTargets(job, area.metro, startedAt, settings, holidays);
   const escalation = settings.escalation_minutes[job.priority] ?? 60;
   await c.query(
     `UPDATE jobs SET sla_started_at = $2, sla_onsite_due = $3, sla_resolve_due = $4, sla_targets = $5, attend_by = $3,
         respond_by = $2::timestamptz + ($6 || ' minutes')::interval WHERE id = $1`,
-    [job.id, startedAt, t.onsiteDue, t.resolveDue, JSON.stringify({ onsite: t.onsiteLabel, resolve: t.resolveLabel, metro: t.metro, priority: job.priority }), String(escalation)]);
+    [job.id, startedAt, t.onsiteDue, t.resolveDue,
+     JSON.stringify({ onsite: t.onsiteLabel, resolve: t.resolveLabel, metro: t.metro, priority: job.priority, area: area.area?.name ?? null,
+       area_confirmed: area.source !== 'unconfirmed', clock_from: job.priority === 'emergency' ? 'booking' : 'release' }),
+     String(escalation)]);
   Object.assign(job, { sla_started_at: startedAt, sla_onsite_due: t.onsiteDue, sla_resolve_due: t.resolveDue });
   return t;
 }
@@ -156,10 +190,9 @@ export async function reclassifyPriority(db: Db, actor: Actor, jobId: string, pr
     if (from === priority) return;
     await c.query('UPDATE jobs SET priority = $2, priority_note = $3, sla_at_risk_alerted_at = NULL WHERE id = $1', [jobId, priority, reason]);
     job.priority = priority;
-    if (job.sla_started_at) {
-      await startSlaClock(c, job);
-      await evaluateSla(c, jobId);
-    }
+    // P1 clocks run from booking, P2–P4 from release; recalculating applies the rule for the new priority.
+    await startSlaClock(c, job);
+    await evaluateSla(c, jobId);
     await recordJobEvent(c, actor, jobId, 'priority.reclassified', { note: `${priorityLabel(from)} → ${priorityLabel(priority)}: ${reason}` });
     await audit(c, actor, { action: 'job.priority_reclassified', entityType: 'job', entityId: jobId, customerId: job.customer_id, details: { from, to: priority, reason } });
   });
@@ -249,6 +282,8 @@ export interface SlaPerformanceRow {
   resolveMet: number;
   resolvePct: number | null;
   avgMinutesToSite: number | null;
+  /** Average minutes between booking and release to dispatch (time held for funds/approval). */
+  avgMinutesBookedToReleased: number | null;
 }
 
 /** SLA performance for jobs whose clock started in the period (optionally one customer). Cancelled jobs are excluded. */
@@ -259,7 +294,8 @@ export async function slaPerformance(db: Db, period: { from: string; to: string 
             COUNT(*) FILTER (WHERE sla_onsite_met)::int AS onsite_met,
             COUNT(*) FILTER (WHERE sla_resolve_met IS NOT NULL)::int AS resolve_measured,
             COUNT(*) FILTER (WHERE sla_resolve_met)::int AS resolve_met,
-            ROUND(AVG(EXTRACT(EPOCH FROM (arrived_at - sla_started_at)) / 60) FILTER (WHERE arrived_at IS NOT NULL))::int AS avg_minutes
+            ROUND(AVG(EXTRACT(EPOCH FROM (arrived_at - sla_started_at)) / 60) FILTER (WHERE arrived_at IS NOT NULL))::int AS avg_minutes,
+            ROUND(AVG(EXTRACT(EPOCH FROM (released_at - created_at)) / 60) FILTER (WHERE released_at IS NOT NULL))::int AS avg_hold_minutes
        FROM jobs
       WHERE sla_started_at IS NOT NULL AND status <> 'cancelled'
         AND (sla_started_at AT TIME ZONE 'Pacific/Auckland')::date BETWEEN $1::date AND $2::date
@@ -274,6 +310,7 @@ export async function slaPerformance(db: Db, period: { from: string; to: string 
       onsiteMeasured: r?.onsite_measured ?? 0, onsiteMet: r?.onsite_met ?? 0, onsitePct: pct(r?.onsite_met ?? 0, r?.onsite_measured ?? 0),
       resolveMeasured: r?.resolve_measured ?? 0, resolveMet: r?.resolve_met ?? 0, resolvePct: pct(r?.resolve_met ?? 0, r?.resolve_measured ?? 0),
       avgMinutesToSite: r?.avg_minutes ?? null,
+      avgMinutesBookedToReleased: r?.avg_hold_minutes ?? null,
     };
   });
 }
@@ -294,6 +331,3 @@ export async function openSlaJobs(db: Db) {
     .sort((a, b) => b.current.riskRatio - a.current.riskRatio);
 }
 
-export async function siteIsMetro(db: Db, siteId: string): Promise<boolean> {
-  return (await maybeOne(db, 'SELECT is_metro FROM sites WHERE id = $1', [siteId]))?.is_metro ?? true;
-}

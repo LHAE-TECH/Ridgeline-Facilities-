@@ -75,8 +75,10 @@ Deploy the new image. Migrations in `migrations/` are applied in order at start-
 - [ ] Review the **facility assessment assumptions** and **coverage factors** against your real cost history.
 - [ ] Review the **pricing rules** (default 35% markup on every category, NZ$135 minimum job charge) and the reference contractor rates used for estimates. Make sure customer agreements disclose them.
 - [ ] Review the **public holidays** list and add regional anniversary days (they affect business-hour SLA clocks).
-- [ ] Confirm the **SLA settings**: P1 non-metro targets (defaults 4 h on site / 8 h made safe are placeholders), `metro_cities`, `sla_business_hours`, escalation windows, and enter `escalation_staff_phones` (on-call mobiles).
-- [ ] Configure **Twilio**: set the status callback URL `https://<host>/webhooks/sms/twilio` (sent automatically per message), then send a test escalation by booking a test P1 job.
+- [ ] Confirm the **SLA settings**: `sla_areas` (Auckland metro / Rodney and Franklin suburb lists), P1 non-metro targets (4 h on site / 8 h made safe), `sla_business_hours`, escalation windows, and enter `escalation_staff_phones` (on-call mobiles). Check every customer site shows a confirmed SLA area.
+- [ ] **Live integration tests must pass** (`npm run test:live`; INTEGRATIONS.md): Stripe test mode (`STRIPE_TEST_SECRET_KEY`) and Twilio (`TWILIO_*`, `SMS_TEST_MOBILE`). Outbound HTTPS to `api.stripe.com` and `api.twilio.com` is required.
+- [ ] Configure **Twilio**: the status callback URL `https://<host>/webhooks/sms/twilio` is sent automatically with each message. Then book a test P1 on the deployed site and confirm the SMS arrives and Admin → Notifications shows **delivered** (proves Twilio can reach the callback).
+- [ ] Monthly customer report: leave `monthly_report_enabled` off until Ridgeline decides to switch it on (then enable per customer).
 - [ ] Make sure every emergency-capable contractor has a **mobile number**.
 - [ ] Create staff users with least privilege (ops / finance / admin).
 - [ ] Onboard contractors: verify trades, insurance and licences, agree rate cards, approve.
@@ -84,4 +86,4 @@ Deploy the new image. Migrations in `migrations/` are applied in order at start-
 - [ ] If using Stripe: set keys, add the webhook endpoint `https://<host>/webhooks/stripe` for `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `payment_intent.succeeded` and `payment_intent.payment_failed`, copy the signing secret into `STRIPE_WEBHOOK_SECRET`, and **run `tests/stripe-live.test.ts` with a test-mode key** (see INTEGRATIONS.md).
 - [ ] If using Xero: create a Custom Connection, set credentials and account codes, then re-queue skipped items in Admin → Integrations.
 - [ ] Schedule backups (BACKUP.md) and do a test restore.
-- [ ] Have your accountant confirm the prepaid / GST treatment, and your lawyer review the privacy statement and customer terms.
+- [ ] Have your accountant confirm the prepaid / GST treatment (docs/GST_TIMING.md: **open**), and your lawyer review the agreements using docs/LEGAL_REVIEW_BRIEF.md.

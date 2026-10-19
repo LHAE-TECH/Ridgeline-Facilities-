@@ -49,13 +49,14 @@ describe('SMS delivery follows the never-report-sent-unless-it-succeeded rule', 
     expect(n.last_error).toMatch(/Invalid or missing NZ phone/);
   });
 
-  it('sends through Twilio and stores the message SID; an API rejection is retried and never marked sent', async () => {
+  it('sends through Twilio and stores the message SID; an outage is retried, a rejected number fails at once, neither is marked sent', async () => {
     configureTwilio();
     const calls: { url: string; body: URLSearchParams }[] = [];
-    let reject = true;
+    let mode: 'outage' | 'reject' | 'ok' = 'outage';
     setSmsFetch((async (url: string, init: any) => {
       calls.push({ url, body: init.body });
-      if (reject) return new Response(JSON.stringify({ code: 21211, message: "The 'To' number is not valid" }), { status: 400 });
+      if (mode === 'outage') return new Response(JSON.stringify({ code: 20500, message: 'Internal Server Error' }), { status: 500 });
+      if (mode === 'reject') return new Response(JSON.stringify({ code: 21211, message: "The 'To' number is not valid" }), { status: 400 });
       return new Response(JSON.stringify({ sid: 'SM123', status: 'queued' }), { status: 201 });
     }) as any);
     expect(resolveSmsTransport()).not.toBeNull();
@@ -64,12 +65,20 @@ describe('SMS delivery follows the never-report-sent-unless-it-succeeded rule', 
     let n = await one(db, `SELECT * FROM notifications WHERE idempotency_key = 'tw'`);
     expect(n.status).toBe('queued');
     expect(n.sent_at).toBeNull();
-    expect(n.last_error).toMatch(/21211/);
+    expect(n.last_error).toMatch(/20500/);
+
+    mode = 'reject';
+    await queueSms(db, { phone: '09 000 0000', template: 't', body: 'Job offer', idempotencyKey: 'tw-bad' });
+    await db.query(`UPDATE notifications SET next_attempt_at = now() + interval '1 hour' WHERE idempotency_key = 'tw'`);
+    await deliverPending(db);
+    const bad = await one(db, `SELECT * FROM notifications WHERE idempotency_key = 'tw-bad'`);
+    expect(bad).toMatchObject({ status: 'failed', attempts: 1, sent_at: null });
+    expect(bad.last_error).toMatch(/21211/);
+    mode = 'ok';
     expect(calls[0].url).toBe('https://api.twilio.com/2010-04-01/Accounts/AC_test/Messages.json');
     expect(calls[0].body.get('To')).toBe('+64215550199');
     expect(calls[0].body.get('StatusCallback')).toMatch(/\/webhooks\/sms\/twilio$/);
 
-    reject = false;
     await db.query(`UPDATE notifications SET next_attempt_at = now() WHERE id = $1`, [n.id]);
     await deliverPending(db);
     n = await one(db, `SELECT * FROM notifications WHERE idempotency_key = 'tw'`);

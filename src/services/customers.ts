@@ -6,7 +6,6 @@ import { isStaff } from '../lib/actor.js';
 import { AppError, ForbiddenError, NotFoundError } from '../lib/errors.js';
 import { audit } from './audit.js';
 import { getSettings } from './settings.js';
-import { isMetroCity } from './sla.js';
 import { CUSTOMER_TERMS_VERSION } from './terms.js';
 
 export const CUSTOMER_CATEGORIES = ['residential', 'commercial', 'body_corporate', 'retail', 'industrial', 'mixed', 'custom'];
@@ -84,31 +83,43 @@ export async function getCustomer(db: Db, actor: Actor, customerId: string) {
   return c;
 }
 
-export interface SiteInput { name: string; address: string; suburb?: string; city?: string; region: string; postcode?: string; lat?: number | null; lng?: number | null; accessNotes?: string; hazards?: string; isMetro?: boolean }
+export interface SiteInput { name: string; address: string; suburb?: string; city?: string; region: string; postcode?: string; lat?: number | null; lng?: number | null; accessNotes?: string; hazards?: string; slaArea?: string | null }
 
 export async function addSite(db: Db, actor: Actor, customerId: string, input: SiteInput) {
   assertCustomerManager(actor, customerId);
   if (!input.name?.trim() || !input.address?.trim()) throw new AppError('Site name and address are required');
   if (!input.region) throw new AppError('Region is required');
-  // Metro status drives the P1 SLA target; derived from the configured metro cities unless staff set it explicitly.
-  const metroCities = (await getSettings(db)).metro_cities;
-  const isMetro = input.isMetro !== undefined && isStaff(actor) ? input.isMetro : isMetroCity(input.city, metroCities) || isMetroCity(input.region, metroCities);
+  if (!input.suburb?.trim()) throw new AppError('Suburb is required: it sets the service-level area for the site');
+  // The SLA area (and so the P1 target) is resolved from the suburb against the sla_areas setting at release time;
+  // staff may pin a site to an area explicitly.
+  const override = input.slaArea && isStaff(actor) ? await validArea(db, input.slaArea) : null;
   const site = await one(db,
-    `INSERT INTO sites (customer_id, name, address, suburb, city, region, postcode, lat, lng, access_notes, hazards, is_metro)
+    `INSERT INTO sites (customer_id, name, address, suburb, city, region, postcode, lat, lng, access_notes, hazards, sla_area_override)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
     [customerId, input.name.trim(), input.address.trim(), input.suburb || null, input.city || null, input.region, input.postcode || null,
-     input.lat ?? null, input.lng ?? null, input.accessNotes || null, input.hazards || null, isMetro]);
+     input.lat ?? null, input.lng ?? null, input.accessNotes || null, input.hazards || null, override]);
   await db.query('UPDATE customers SET region = COALESCE(region, $2) WHERE id = $1', [customerId, input.region]);
   await audit(db, actor, { action: 'site.created', entityType: 'site', entityId: site.id, customerId });
   return site;
 }
 
-/** Staff override of a site's metro classification (affects P1 targets for jobs released after the change). */
-export async function setSiteMetro(db: Db, actor: Actor, siteId: string, isMetro: boolean) {
+async function validArea(db: Db, name: string): Promise<string> {
+  const areas = (await getSettings(db)).sla_areas;
+  const area = areas.find((a) => a.name.toLowerCase() === name.trim().toLowerCase());
+  if (!area) throw new AppError(`Unknown SLA area "${name}". Areas are configured in Settings (sla_areas).`);
+  return area.name;
+}
+
+/**
+ * Staff pin a site to an SLA area, or clear the pin (empty) so the suburb decides. Applies to SLA clocks started or
+ * recalculated after the change.
+ */
+export async function setSiteArea(db: Db, actor: Actor, siteId: string, areaName: string | null) {
   if (!isStaff(actor) || actor.role === 'finance') throw new ForbiddenError();
-  const site = await maybeOne(db, 'UPDATE sites SET is_metro = $2 WHERE id = $1 RETURNING *', [siteId, isMetro]);
+  const value = areaName?.trim() ? await validArea(db, areaName) : null;
+  const site = await maybeOne(db, 'UPDATE sites SET sla_area_override = $2 WHERE id = $1 RETURNING *', [siteId, value]);
   if (!site) throw new NotFoundError('Site');
-  await audit(db, actor, { action: 'site.metro_set', entityType: 'site', entityId: siteId, customerId: site.customer_id, details: { isMetro } });
+  await audit(db, actor, { action: 'site.sla_area_set', entityType: 'site', entityId: siteId, customerId: site.customer_id, details: { area: value } });
   return site;
 }
 
@@ -176,6 +187,7 @@ export interface CustomerTermsInput {
   authorityLimitCents?: number;
   paymentTermsDays?: number;
   poRequired?: boolean;
+  monthlyReportEnabled?: boolean;
   acknowledgementRequired?: boolean;
   cancellationFeesApply?: boolean;
   autoApplyPrepaid?: boolean;
@@ -187,6 +199,9 @@ export async function updateCustomerTerms(db: Db, actor: Actor, customerId: stri
   return tx(db, async (c) => {
     const before = await maybeOne(c, 'SELECT * FROM customers WHERE id = $1 FOR UPDATE', [customerId]);
     if (!before) throw new NotFoundError('Customer');
+    if (input.monthlyReportEnabled !== undefined && input.monthlyReportEnabled !== before.monthly_report_enabled && actor.role !== 'admin') {
+      throw new ForbiddenError('Only an administrator can turn the monthly report on or off');
+    }
     if (input.status === 'active' && before.agreed_minimum_balance_cents === null) {
       throw new AppError('Agree a minimum balance before activating the account');
     }
@@ -196,11 +211,12 @@ export async function updateCustomerTerms(db: Db, actor: Actor, customerId: stri
          emergency_cover = COALESCE($4, emergency_cover), authority_limit_cents = COALESCE($5, authority_limit_cents),
          payment_terms_days = COALESCE($6, payment_terms_days), po_required = COALESCE($7, po_required),
          acknowledgement_required = COALESCE($8, acknowledgement_required), cancellation_fees_apply = COALESCE($9, cancellation_fees_apply),
-         auto_apply_prepaid = COALESCE($10, auto_apply_prepaid), status = COALESCE($11, status), updated_at = now()
+         auto_apply_prepaid = COALESCE($10, auto_apply_prepaid), status = COALESCE($11, status),
+         monthly_report_enabled = COALESCE($12, monthly_report_enabled), updated_at = now()
        WHERE id = $1 RETURNING *`,
       [customerId, input.customerCategory ?? null, input.serviceLevel ?? null, input.emergencyCover ?? null, input.authorityLimitCents ?? null,
        input.paymentTermsDays ?? null, input.poRequired ?? null, input.acknowledgementRequired ?? null, input.cancellationFeesApply ?? null,
-       input.autoApplyPrepaid ?? null, input.status ?? null]);
+       input.autoApplyPrepaid ?? null, input.status ?? null, input.monthlyReportEnabled ?? null]);
     const changed: Record<string, unknown> = {};
     for (const k of Object.keys(after)) if (JSON.stringify(after[k]) !== JSON.stringify(before[k]) && k !== 'updated_at') changed[k] = { from: before[k], to: after[k] };
     await audit(c, actor, { action: 'customer.terms_updated', entityType: 'customer', entityId: customerId, customerId, details: changed });

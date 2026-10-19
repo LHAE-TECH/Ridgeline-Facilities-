@@ -11,6 +11,7 @@ import { JOB_STATUS_LABELS } from '../services/jobState.js';
 import { accountPosition } from '../services/ledger.js';
 import { AUTO_TOPUP_CONSENT_TEXT, grantAutoTopUpConsent, requestPayment, requestRefund, revokeAutoTopUpConsent } from '../services/payments.js';
 import { completionReportPdf, customerInvoicePdf, monthlyReportPdf, statementPdf } from '../services/pdf.js';
+import { monthlyReportsEnabledFor } from '../services/monthlyReport.js';
 import { createCardSetupCheckout, describeCard, removeCard, savedCard } from '../services/autoTopUp.js';
 import { PRIORITY_META, TRIAGE_QUESTIONS, slaPerformance } from '../services/sla.js';
 import { getSettings } from '../services/settings.js';
@@ -279,7 +280,15 @@ customerRouter.post('/invoices/:id/pay', action(async (req, res) => {
   res.redirect(303, url);
 }));
 
-// ---- Monthly reports ----
+// ---- Monthly reports (off unless enabled globally and for this customer) ----
+customerRouter.use(async (req, res, next) => {
+  res.locals.reportsEnabled = await monthlyReportsEnabledFor(pool, cid(req));
+  next();
+});
+customerRouter.use('/reports', (req, res, next) => {
+  if (!res.locals.reportsEnabled) throw new AppError('Monthly reports are not enabled for this account', 404);
+  next();
+});
 customerRouter.get('/reports', async (req, res) => {
   const months = await query<{ m: string }>(pool, `SELECT DISTINCT to_char(created_at AT TIME ZONE 'Pacific/Auckland', 'YYYY-MM') AS m FROM jobs WHERE customer_id = $1 ORDER BY m DESC LIMIT 24`, [cid(req)]);
   const month = /^\d{4}-\d{2}$/.test(str(req.query.month)) ? str(req.query.month) : months[0]?.m ?? new Date().toISOString().slice(0, 7);

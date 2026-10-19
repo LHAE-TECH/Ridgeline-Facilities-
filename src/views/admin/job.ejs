@@ -4,7 +4,8 @@
 <% if (job.hold_reason) { %><div class="notice"><%= job.hold_reason %></div><% } %>
 <% if (job.priority_note) { %><div class="notice"><strong>Priority:</strong> <%= job.priority_note %></div><% } %>
 <div class="card"><h2>Service level</h2>
-  <% if (!job.sla_started_at) { %><p class="muted">Clock starts when the job is accepted for dispatch.</p><% } else { %>
+  <%- include('../partials/job-times', { job: job }) %>
+  <% if (!job.sla_started_at) { %><p class="muted">P2–P4 clocks start when the job is released to dispatch.</p><% } else { %>
   <div class="grid-2">
     <div><strong><%= job.sla_targets.onsite %></strong><br>Due <%= dt(job.sla_onsite_due) %><br>
       <span class="badge <%= ['breached','missed'].includes(sla.onsite.state) ? 'err' : sla.onsite.state === 'at_risk' ? 'warn' : 'ok' %>"><%= slaBadge(sla.onsite) %></span><% if (job.arrived_at) { %> <small>arrived <%= dt(job.arrived_at) %></small><% } %></div>
@@ -12,7 +13,7 @@
       <span class="badge <%= ['breached','missed'].includes(sla.resolve.state) ? 'err' : sla.resolve.state === 'at_risk' ? 'warn' : 'ok' %>"><%= slaBadge(sla.resolve) %></span>
       <% if (job.made_safe_at) { %> <small>made safe <%= dt(job.made_safe_at) %></small><% } else if (job.completed_at) { %> <small>completed <%= dt(job.completed_at) %></small><% } %></div>
   </div>
-  <p class="field-hint">Clock started <%= dt(job.sla_started_at) %> · <%= job.sla_targets.metro ? 'Metro site' : 'Non-metro site' %><% if (job.escalation_level) { %> · escalated <%= dt(job.escalated_at) %> (level <%= job.escalation_level %>)<% } %></p>
+  <p class="field-hint"><%= job.sla_targets.area || (job.sla_targets.metro ? 'Metro' : 'Non-metro') %> (<%= job.sla_targets.metro ? 'metro' : 'non-metro' %> targets)<% if (job.escalation_level) { %> · escalated <%= dt(job.escalated_at) %> (level <%= job.escalation_level %>)<% } %></p>
   <% } %>
   <% if (job.triage) { %><details><summary>Intake triage (suggested <%= job.suggested_priority ? prio(job.suggested_priority) : '—' %>)</summary><ul>
     <% triageQuestions.forEach(function (q) { %><li><%= q.text %> <strong><%= job.triage[q.key] ? 'Yes' : 'No' %></strong></li><% }) %></ul></details><% } %>
@@ -20,8 +21,11 @@
   <form method="post" action="/admin/jobs/<%= job.id %>/priority" class="inline-form"><%- include('../partials/csrf') %>
     <select name="priority"><% Object.keys(priorityMeta).forEach(function (p) { %><option value="<%= p %>" <%= p === job.priority ? 'selected' : '' %>><%= priorityMeta[p].code %> <%= priorityMeta[p].label %></option><% }) %></select>
     <input name="reason" required placeholder="Reason for reclassifying"><button class="small secondary" type="submit">Reclassify</button></form>
-  <form method="post" action="/admin/sites/<%= job.site_id %>/metro" class="inline-form"><%- include('../partials/csrf') %><input type="hidden" name="back" value="/admin/jobs/<%= job.id %>">
-    <input type="hidden" name="is_metro" value="<%= job.site_is_metro ? '' : 'on' %>"><button class="small secondary" type="submit">Site is <%= job.site_is_metro ? 'metro' : 'non-metro' %>: mark <%= job.site_is_metro ? 'non-metro' : 'metro' %></button></form>
+  <form method="post" action="/admin/sites/<%= job.site_id %>/area" class="inline-form"><%- include('../partials/csrf') %><input type="hidden" name="back" value="/admin/jobs/<%= job.id %>">
+    <label>SLA area <select name="area"><option value="">Follow suburb (<%= job.site_suburb || job.site_city || 'none' %>)</option>
+      <% areas.forEach(function (a) { %><option value="<%= a.name %>" <%= job.site_sla_area_override === a.name ? 'selected' : '' %>><%= a.name %> (<%= a.metro ? 'metro' : 'non-metro' %>)</option><% }) %></select></label>
+    <button class="small secondary" type="submit">Set area</button></form>
+  <% if (area.source === 'unconfirmed') { %><p class="notice">Suburb "<%= job.site_suburb || '—' %>" is not in any SLA area; metro targets are applied until staff assign an area (Settings → sla_areas, or pin the site above).</p><% } %>
   <% } %>
 </div>
 <div class="grid-2">

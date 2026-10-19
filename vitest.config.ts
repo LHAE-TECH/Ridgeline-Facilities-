@@ -18,6 +18,16 @@ export default defineConfig({
       STRIPE_WEBHOOK_SECRET: 'whsec_test_secret',
       XERO_CLIENT_ID: '',
       XERO_CLIENT_SECRET: '',
+      // Never let ordinary tests reach Twilio (fixture numbers could belong to real people). Only the live SMS test
+      // uses real credentials, passed under LIVE_* names.
+      TWILIO_ACCOUNT_SID: '',
+      TWILIO_AUTH_TOKEN: '',
+      TWILIO_FROM_NUMBER: '',
+      TWILIO_MESSAGING_SERVICE_SID: '',
+      LIVE_TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID ?? '',
+      LIVE_TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN ?? '',
+      LIVE_TWILIO_FROM_NUMBER: process.env.TWILIO_FROM_NUMBER ?? '',
+      LIVE_TWILIO_MESSAGING_SERVICE_SID: process.env.TWILIO_MESSAGING_SERVICE_SID ?? '',
     },
     hookTimeout: 60000,
   },

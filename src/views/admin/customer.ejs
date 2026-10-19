@@ -38,6 +38,8 @@
       <label class="check"><input type="checkbox" name="acknowledgement_required" <%= customer.acknowledgement_required ? 'checked' : '' %>> Site acknowledgement required at completion</label>
       <label class="check"><input type="checkbox" name="cancellation_fees_apply" <%= customer.cancellation_fees_apply ? 'checked' : '' %>> Late cancellation charges permitted by agreement</label>
       <label class="check"><input type="checkbox" name="auto_apply_prepaid" <%= customer.auto_apply_prepaid ? 'checked' : '' %>> Apply prepaid credit to invoices automatically</label>
+      <% if (actor.role === 'admin') { %><label class="check"><input type="checkbox" name="monthly_report_enabled" <%= customer.monthly_report_enabled ? 'checked' : '' %>> Send monthly SLA &amp; spend report (also needs the global <code>monthly_report_enabled</code> setting)</label>
+      <% } else { %><p class="field-hint">Monthly report: <%= customer.monthly_report_enabled ? 'on' : 'off' %> (administrator setting)</p><% } %>
       <button type="submit">Save terms</button></form></div>
   <div class="card"><h2>Record bank receipt</h2>
     <% if (['admin','finance'].includes(actor.role)) { %>
@@ -56,7 +58,8 @@
   </div>
 </div>
 <div class="card"><h2>Portfolio</h2><div class="table-wrap"><table><tr><th>Site</th><th>Facility</th><th>Type</th><th class="num">Units</th></tr>
-<% facilities.forEach(function (f) { const s = sites.find(function (x) { return x.id === f.site_id; }); %><tr><td><%= s ? s.name : '' %><br><small><%= s ? s.address + ', ' + s.region : '' %> · <%= s && s.is_metro ? 'metro' : 'non-metro' %></small></td><td><%= f.name %></td><td><%= f.type_name %></td><td class="num"><%= f.unit_count %></td></tr><% }) %></table></div></div>
+<% facilities.forEach(function (f) { const s = sites.find(function (x) { return x.id === f.site_id; }); %><tr><td><%= s ? s.name : '' %><br><small><%= s ? s.address + ', ' + s.region : '' %><% if (s) { const a = siteAreas[s.id]; %> · SLA area: <%= a.area ? a.area.name + (a.metro ? ' (metro)' : ' (non-metro)') : 'UNCONFIRMED (metro targets applied)' %><%= a.source === 'override' ? ', pinned' : '' %>
+  <form method="post" action="/admin/sites/<%= s.id %>/area" class="inline-form"><%- include('../partials/csrf') %><select name="area"><option value="">Follow suburb (<%= s.suburb || 'none' %>)</option><% slaAreas.forEach(function (x) { %><option value="<%= x.name %>" <%= s.sla_area_override === x.name ? 'selected' : '' %>><%= x.name %></option><% }) %></select><button class="small secondary" type="submit">Set area</button></form><% } %></small></td><td><%= f.name %></td><td><%= f.type_name %></td><td class="num"><%= f.unit_count %></td></tr><% }) %></table></div></div>
 <div class="grid-2">
   <div class="card"><h2>Jobs</h2><div class="table-wrap"><table><% jobs.forEach(function (j) { %><tr><td><a href="/admin/jobs/<%= j.id %>"><%= j.ref %></a> <%= j.title %></td><td><%- include('../partials/status', { s: j.status }) %></td></tr><% }) %></table></div></div>
   <div class="card"><h2>Invoices</h2><div class="table-wrap"><table><% invoices.forEach(function (i) { %><tr><td><a href="/admin/customer-invoices/<%= i.id %>"><%= i.invoice_number || 'Draft' %></a></td><td class="num"><%= money(i.total_cents) %></td><td><%- include('../partials/status', { s: i.status }) %></td></tr><% }) %></table></div></div>

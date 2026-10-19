@@ -14,7 +14,9 @@
     <dt>Site contact</dt><dd><%= job.site_contact_name || '—' %> <%= job.site_contact_phone || '' %></dd>
     <dt>Preferred window</dt><dd><%= dt(job.preferred_start) %> – <%= dt(job.preferred_end) %></dd>
     <dt>PO number</dt><dd><%= job.po_number || '—' %></dd>
-    <% if (job.sla_targets) { %><dt>Service level</dt><dd><%= job.sla_targets.onsite %> (by <%= dt(job.sla_onsite_due) %>)<br><%= job.sla_targets.resolve %> (by <%= dt(job.sla_resolve_due) %>)
+    <dt>Booked</dt><dd><%= dt(job.created_at) %></dd>
+    <dt>Released to dispatch</dt><dd><%= job.released_at ? dt(job.released_at) : 'Not yet released' %><% if (job.released_at) { const g = Math.round((new Date(job.released_at) - new Date(job.created_at)) / 60000); if (g > 0) { %> <small>(<%= g >= 120 ? (g / 60).toFixed(1) + ' h' : g + ' min' %> after booking)</small><% } } %></dd>
+    <% if (job.sla_targets) { %><dt>Service level</dt><dd><small>Clock from <%= job.priority === 'emergency' ? 'booking' : 'release to dispatch' %></small><br><%= job.sla_targets.onsite %> (by <%= dt(job.sla_onsite_due) %>)<br><%= job.sla_targets.resolve %> (by <%= dt(job.sla_resolve_due) %>)
       <% if (job.sla_onsite_met === false || job.sla_resolve_met === false) { %><br><span class="badge err">Target missed</span><% } else if (job.sla_onsite_met) { %><br><span class="badge ok">On-site target met</span><% } %></dd><% } %>
     <% if (job.made_safe_at) { %><dt>Made safe</dt><dd><%= dt(job.made_safe_at) %></dd><% } %>
     <dt>Estimate</dt><dd><%= money(job.estimate_total_cents) %> incl GST <small>(estimate only)</small></dd>

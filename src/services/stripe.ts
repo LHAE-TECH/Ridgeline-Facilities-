@@ -17,7 +17,9 @@ export function stripeEnabled(): boolean {
   return Boolean(config.stripe.secretKey && config.stripe.webhookSecret);
 }
 export function stripeClient(): Stripe {
-  if (!client) client = new Stripe(config.stripe.secretKey || 'sk_test_unconfigured', { maxNetworkRetries: 2 });
+  // Behind an outbound HTTPS proxy, use the fetch client so Node's proxy support (NODE_USE_ENV_PROXY=1) applies.
+  if (!client) client = new Stripe(config.stripe.secretKey || 'sk_test_unconfigured', { maxNetworkRetries: 2,
+    ...(process.env.HTTPS_PROXY ? { httpClient: Stripe.createFetchHttpClient() } : {}) });
   return client;
 }
 /** Used after changing keys at runtime (tests). */

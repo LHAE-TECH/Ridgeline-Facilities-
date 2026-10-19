@@ -19,7 +19,7 @@
     <form method="post" action="/app/sites" class="stack"><%- include('../partials/csrf') %>
       <div><label>Site name</label><input name="name" required placeholder="e.g. Harbour View Apartments"></div>
       <div><label>Street address</label><input name="address" required></div>
-      <div class="grid-2"><div><label>Suburb</label><input name="suburb"></div><div><label>City</label><input name="city"></div></div>
+      <div class="grid-2"><div><label>Suburb</label><input name="suburb" required></div><div><label>City</label><input name="city"></div></div>
       <div class="grid-2"><div><label>Region</label><select name="region" required><% regions.forEach(function (r) { %><option><%= r %></option><% }) %></select></div><div><label>Postcode</label><input name="postcode" inputmode="numeric"></div></div>
       <div><label>Access instructions</label><textarea name="access_notes" rows="2" placeholder="Key safe code location, parking, building manager…"></textarea></div>
       <div><label>Known hazards</label><textarea name="hazards" rows="2" placeholder="Asbestos register, dogs, confined spaces…"></textarea></div>
